@@ -1,5 +1,7 @@
 package com.labprobe.app
 
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -150,5 +152,191 @@ class RouterSpeedTestLogicTest {
         assertEquals("测速状态读取连续失败，请重试", routerSpeedPollStopReason("running", ROUTER_SPEED_POLL_FAILURE_LIMIT, 0L))
         assertEquals("测速状态读取超时，请重试", routerSpeedPollStopReason("running", 0, ROUTER_SPEED_POLL_TIMEOUT_MS))
         assertEquals(null, routerSpeedPollStopReason("running", ROUTER_SPEED_POLL_FAILURE_LIMIT - 1, ROUTER_SPEED_POLL_TIMEOUT_MS - 1))
+    }
+
+    @Test
+    fun progressParsingPreservesEveryInterfaceAndHubOrder() {
+        val wan1 = JSONObject()
+            .put("intf", "wan1")
+            .put("downspeed", JSONArray().put(200).put(220))
+            .put("upspeed", JSONArray().put(20))
+            .put("currentDown", 220)
+            .put("currentUp", 20)
+            .put("latency", 2.5)
+            .put("jitter", 0.4)
+            .put("loss", 0.1)
+        val wan = JSONObject()
+            .put("intf", "wan")
+            .put("downspeed", JSONArray().put(500).put(510))
+            .put("upspeed", JSONArray())
+            .put("currentDown", 510)
+            .put("latency", 1.5)
+        val progress = speedTestProgressFrom(
+            JSONObject()
+                .put("stat", "running")
+                .put("primary", wan1)
+                .put("interfaces", JSONArray().put(wan1).put(wan))
+        )
+
+        assertEquals(listOf("wan1", "wan"), speedTestSamples(progress).map { it.intf })
+        assertEquals("wan1", progress.primary?.intf)
+        assertEquals(listOf(200.0, 220.0), speedTestSamples(progress)[0].down)
+        assertEquals(1.5, speedTestSamples(progress)[1].latency!!, 0.001)
+        // Upload phase belongs to WAN1 only; WAN has not entered its upload phase.
+        assertTrue(isSpeedTestUploadPhase(true, progress, "wan1"))
+        assertFalse(isSpeedTestUploadPhase(true, progress, "wan"))
+        assertEquals(
+            "WAN1 ↓ 220.00 Mbps · WAN ↓ 510.00 Mbps",
+            speedTestCollapsedSummary(progress, running = false)
+        )
+    }
+
+    @Test
+    fun portSelectionUsesWanCapabilityNotArrayPosition() {
+        val ports = speedTestPortsFrom(
+            JSONObject().put(
+                "ports",
+                JSONArray()
+                    .put(JSONObject().put("name", "WAN1").put("wan", true).put("testable", true))
+                    .put(JSONObject().put("name", "LAN1").put("wan", false).put("testable", false))
+                    .put(JSONObject().put("name", "WAN").put("wan", true).put("testable", true))
+                    .put(JSONObject().put("name", "WAN2").put("wan", true).put("testable", false))
+            )
+        )
+
+        assertEquals(listOf("wan", "wan1", SPEED_TEST_BOTH_INTERFACES),
+            speedTestInterfaceOptions(ports).map { it.id })
+        assertEquals(listOf("wan"), speedTestSelection(ports, "wan"))
+        assertEquals(listOf("wan1"), speedTestSelection(ports, "wan1"))
+        assertEquals(listOf("wan", "wan1"), speedTestSelection(ports, SPEED_TEST_BOTH_INTERFACES))
+        // Missing/unknown selections retain the single-WAN default.
+        assertEquals(listOf("wan"), speedTestSelection(ports, "missing"))
+    }
+
+    @Test
+    fun unifiedWanInventoryDrivesOptionsAndHidesUnconfiguredWan1() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(
+                    wanId = "wan", logicalInterface = "wan", supported = true,
+                    configured = true, enabled = true, online = true,
+                    capabilities = mapOf("speedtest" to true),
+                ),
+                WanInfo(
+                    wanId = "wan1", logicalInterface = "wan1", supported = true,
+                    configured = false, enabled = false, online = false,
+                    capabilities = mapOf("speedtest" to false),
+                ),
+            ),
+            configuredCount = 1,
+        )
+        assertEquals(listOf("wan"), speedTestInterfaceOptions(emptyList(), inventory).map { it.id })
+        assertEquals(listOf("wan"), speedTestSelection(emptyList(), "both", inventory))
+
+        val dual = inventory.copy(
+            wans = inventory.wans.map { it.copy(configured = true, enabled = true, capabilities = mapOf("speedtest" to true)) },
+            configuredCount = 2,
+        )
+        assertEquals(
+            listOf("wan", "wan1", SPEED_TEST_BOTH_INTERFACES),
+            speedTestInterfaceOptions(emptyList(), dual).map { it.id },
+        )
+        assertEquals(listOf("wan", "wan1"), speedTestSelection(emptyList(), SPEED_TEST_BOTH_INTERFACES, dual))
+    }
+
+    @Test
+    fun legacyPortsWithoutWanFlagStillFallBackToTheOnlyTestableInterface() {
+        val ports = speedTestPortsFrom(
+            JSONObject().put(
+                "ports",
+                JSONArray()
+                    .put(JSONObject().put("name", "LAN1").put("testable", false))
+                    .put(JSONObject().put("name", "WAN1").put("testable", true))
+            )
+        )
+        assertTrue(ports.last().wan)
+        assertEquals(listOf("wan1"), speedTestSelection(ports, "wan"))
+        assertEquals(listOf("wan1"), speedTestInterfaceOptions(ports).single().interfaces)
+    }
+
+    @Test
+    fun historyParsingKeepsReorderedInterfaceResultsAssociated() {
+        val history = speedTestHistoryFrom(
+            JSONObject().put(
+                "records",
+                JSONArray().put(
+                    JSONObject()
+                        .put("epoch", 1_789_637_285L)
+                        .put(
+                            "interfaces",
+                            JSONArray()
+                                .put(JSONObject()
+                                    .put("intf", "wan1")
+                                    .put("currentDown", 222.5)
+                                    .put("currentUp", 21.5)
+                                    .put("latency", 3.5)
+                                    .put("jitter", 0.5)
+                                    .put("loss", 0.2))
+                                .put(JSONObject()
+                                    .put("intf", "wan")
+                                    .put("currentDown", 587.07)
+                                    .put("currentUp", 49.23)
+                                    .put("latency", 1.68))
+                        )
+                        .put("primary", JSONObject().put("intf", "wan1").put("currentDown", 222.5))
+                )
+            )
+        )
+
+        val record = history.single()
+        assertEquals(listOf("wan1", "wan"), speedTestHistoryInterfaces(record).map { it.intf })
+        assertEquals(222.5, speedTestHistoryInterfaces(record)[0].downMbps!!, 0.001)
+        assertEquals(587.07, speedTestHistoryInterfaces(record)[1].downMbps!!, 0.001)
+        assertEquals(49.23, speedTestHistoryInterfaces(record)[1].upMbps!!, 0.001)
+        assertEquals(0.2, speedTestHistoryInterfaces(record)[0].loss!!, 0.001)
+    }
+
+    @Test
+    fun legacyPrimaryOnlyPayloadsAndRecordsFallBackToSingleInterface() {
+        val progress = speedTestProgressFrom(
+            JSONObject()
+                .put("stat", "end")
+                .put("primary", JSONObject().put("intf", "wan").put("currentDown", 575.41))
+        )
+        assertEquals(listOf("wan"), speedTestSamples(progress).map { it.intf })
+        assertEquals(575.41, speedTestSamples(progress).single().currentDown!!, 0.001)
+
+        val history = speedTestHistoryFrom(
+            JSONObject().put(
+                "records",
+                JSONArray().put(
+                    JSONObject()
+                        .put("epoch", 12L)
+                        .put("primary", JSONObject()
+                            .put("intf", "wan")
+                            .put("currentDown", 587.07)
+                            .put("currentUp", 49.23)
+                            .put("latency", 1.68))
+                )
+            )
+        )
+        assertEquals(listOf("wan"), speedTestHistoryInterfaces(history.single()).map { it.intf })
+        val legacyRecord = SpeedHistoryRecord(12L, "wan", 587.07, 49.23, 1.68)
+        assertEquals(listOf("wan"), speedTestHistoryInterfaces(legacyRecord).map { it.intf })
+        assertEquals(587.07, speedTestHistoryInterfaces(legacyRecord).single().downMbps!!, 0.001)
+    }
+
+    @Test
+    fun startBodyAcceptsInterfaceListAndKeepsNodeMappingPerInterface() {
+        val body = speedTestStartBody(listOf("WAN", "wan1", "wan"), "308000101")
+        val interfaces = body.getJSONArray("intf")
+        assertEquals(listOf("wan", "wan1"), (0 until interfaces.length()).map { interfaces.getString(it) })
+        val nodes = body.getJSONObject("nodes")
+        assertEquals(setOf("wan", "wan1"), nodes.keys().asSequence().toSet())
+        assertEquals("308000101", nodes.getString("wan"))
+        assertEquals("308000101", nodes.getString("wan1"))
+        assertEquals(listOf("wan"), speedTestStartBody(listOf("wan"), "0").getJSONArray("intf").let {
+            (0 until it.length()).map(it::getString)
+        })
     }
 }

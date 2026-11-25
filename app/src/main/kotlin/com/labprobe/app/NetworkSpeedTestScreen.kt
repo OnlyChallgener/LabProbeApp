@@ -114,6 +114,8 @@ private enum class SpeedTestChannel { ROUTER, PHONE }
 private fun RouterSpeedTestContent(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     val api = remember(prefs.hub, prefs.token) { SpeedTestApi(prefs) }
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val wanResource by repository.wans.collectAsState()
     var nodes by remember { mutableStateOf<List<SpeedTestNode>>(emptyList()) }
     var ports by remember { mutableStateOf<List<SpeedTestPort>>(emptyList()) }
     var history by remember { mutableStateOf<List<SpeedHistoryRecord>>(emptyList()) }
@@ -127,6 +129,10 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
     var progress by remember { mutableStateOf<SpeedProgress?>(null) }
     var error by remember { mutableStateOf("") }
 
+    LaunchedEffect(repository) {
+        repository.refreshWans()
+    }
+
     LaunchedEffect(prefs.hub, prefs.token) {
         preparing = true
         coroutineScope {
@@ -136,9 +142,7 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
                     nodes = api.nodes()
                     selectedNode = nodes.firstOrNull()?.id.orEmpty()
                 }.onFailure { error = speedTestErrorText(it.message) }
-                ports.firstOrNull { it.testable }?.name?.lowercase()?.takeIf { it.isNotBlank() }?.let {
-                    selectedPort = it
-                }
+                selectedPort = speedTestSelection(ports, selectedPort, wanResource.value).firstOrNull() ?: "wan"
                 preparing = false
             }
             launch {
@@ -183,22 +187,51 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
     }
 
     val last = history.firstOrNull()
-    val primary = progress?.primary
+    val wanInventory = wanResource.value
+    val interfaceOptions = speedTestInterfaceOptions(ports, wanInventory)
+    val selectedInterfaces = speedTestSelection(ports, selectedPort, wanInventory)
+    LaunchedEffect(interfaceOptions) {
+        if (interfaceOptions.isNotEmpty() && interfaceOptions.none { it.id == selectedPort }) {
+            selectedPort = interfaceOptions.first().id
+        }
+    }
+    val progressSamples = speedTestSamples(progress)
+    val historySamples = last?.let { record ->
+        speedTestHistoryInterfaces(record).map { result ->
+            SpeedSampleSet(
+                intf = result.intf,
+                down = emptyList(),
+                up = emptyList(),
+                currentDown = result.downMbps,
+                currentUp = result.upMbps,
+                latency = result.latency,
+                jitter = result.jitter,
+                loss = result.loss
+            )
+        }
+    }.orEmpty()
+    val displayedSamples = progressSamples.ifEmpty { historySamples }
+    val primary = displayedSamples.firstOrNull()
     // 路由器侧不做任何本地重采样：曲线和仪表都用固件上报的原始序列与数值。
     val down = when {
         progress?.finished == true -> speedSeriesAverage(primary?.down.orEmpty()) ?: primary?.currentDown
         primary != null -> primary.currentDown
-        else -> last?.downMbps
+        else -> null
     }
     val up = when {
         progress?.finished == true -> speedSeriesAverage(primary?.up.orEmpty()) ?: primary?.currentUp
-        primary == null -> last?.upMbps
+        primary == null -> null
         primary.up.isEmpty() -> null
         else -> primary.currentUp
     }
-    val latency = progress?.primary?.latency ?: last?.latency
+    val latency = primary?.latency
+    val activeInterfaces = displayedSamples.map { speedTestInterfaceLabel(it.intf) }.distinct()
     val summary = when {
-        running -> "测速进行中"
+        running -> if (activeInterfaces.isEmpty()) "测速进行中" else
+            "测速进行中 · ${activeInterfaces.joinToString(" + ")}"
+        displayedSamples.size > 1 && last?.epoch != null && last.epoch > 0 ->
+            "上次测速 · " + SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(last.epoch * 1000L)) +
+                " · ${activeInterfaces.joinToString(" + ")}"
         last?.epoch != null && last.epoch > 0 ->
             "上次测速 · " + SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(last.epoch * 1000L))
         down != null -> "上次结果"
@@ -221,10 +254,16 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 RouterSpeedSummary(summary)
-                DualSpeedGauges(down = down, up = up)
-                Text("速度波动曲线", style = LabTypography.SectionTitle.copy(color = SpeedPageInk))
-                DualSpeedCharts(progress?.primary)
-                SpeedMetrics(latency = latency, jitter = progress?.primary?.jitter, loss = progress?.primary?.loss)
+                if (displayedSamples.size > 1) {
+                    displayedSamples.forEach { sample ->
+                        RouterSpeedInterfaceResult(sample, finished = progress?.finished == true)
+                    }
+                } else {
+                    DualSpeedGauges(down = down, up = up)
+                    Text("速度波动曲线", style = LabTypography.SectionTitle.copy(color = SpeedPageInk))
+                    DualSpeedCharts(primary)
+                    SpeedMetrics(latency = latency, jitter = primary?.jitter, loss = primary?.loss)
+                }
             }
         }
 
@@ -243,6 +282,13 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
                 Modifier.fillMaxWidth().padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (interfaceOptions.size > 1) {
+                    SpeedInterfaceSelector(
+                        options = interfaceOptions,
+                        selected = selectedPort,
+                        enabled = !running && !starting && !preparing
+                    ) { selectedPort = it }
+                }
                 Text("测速节点", style = LabTypography.SectionTitle.copy(color = SpeedPageInk))
                 if (nodes.isEmpty()) {
                     Text(
@@ -254,12 +300,14 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
                 }
                 Button(
                     onClick = {
-                        if (running || preparing || starting || !stateChecked || nodes.isEmpty()) return@Button
+                        if (running || preparing || starting || !stateChecked || nodes.isEmpty() ||
+                            selectedInterfaces.isEmpty()
+                        ) return@Button
                         error = ""
                         starting = true
                         scope.launch {
                             try {
-                                api.start(selectedPort, selectedNode)
+                                api.start(selectedInterfaces, selectedNode)
                                 progress = null
                                 running = true
                             } catch (throwable: Exception) {
@@ -269,7 +317,8 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
                             }
                         }
                     },
-                    enabled = !running && !preparing && !starting && stateChecked && nodes.isNotEmpty(),
+                    enabled = !running && !preparing && !starting && stateChecked &&
+                        nodes.isNotEmpty() && selectedInterfaces.isNotEmpty(),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SpeedAccent,
@@ -332,7 +381,11 @@ private fun RouterSpeedTestContent(prefs: AppPrefs) {
                                 style = LabTypography.Supporting.copy(color = SpeedPageMuted)
                             )
                         } else {
-                            history.take(30).forEach { record -> SpeedHistoryLine(record) }
+                            history.take(30).forEach { record ->
+                                speedTestHistoryInterfaces(record).forEach { result ->
+                                    SpeedHistoryLine(record.epoch, result)
+                                }
+                            }
                         }
                         Spacer(Modifier.height(8.dp))
                     }
@@ -754,6 +807,44 @@ private fun PhoneSpeedHistoryLine(record: PhoneSpeedHistoryEntry) {
 }
 
 @Composable
+private fun SpeedInterfaceSelector(
+    options: List<SpeedTestInterfaceOption>,
+    selected: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("测速端口", style = LabTypography.SectionTitle.copy(color = SpeedPageInk))
+        SpeedNodeChips(
+            nodes = options.map { SpeedTestNode(it.id, it.label) },
+            selected = selected,
+            enabled = enabled
+        ) { onSelect(it) }
+        if (options.any { it.id == SPEED_TEST_BOTH_INTERFACES }) {
+            Text("双 WAN 分别测速，不合计速率", fontSize = 10.sp, color = SpeedPageMuted)
+        }
+    }
+}
+
+@Composable
+private fun RouterSpeedInterfaceResult(sample: SpeedSampleSet, finished: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "${speedTestInterfaceLabel(sample.intf)} · 独立测速结果",
+            style = LabTypography.SectionTitle.copy(color = SpeedPageInk)
+        )
+        DualSpeedGauges(
+            down = if (finished) speedSeriesAverage(sample.down) ?: sample.currentDown
+            else sample.currentDown,
+            up = if (finished) speedSeriesAverage(sample.up) ?: sample.currentUp
+            else sample.currentUp
+        )
+        DualSpeedCharts(sample)
+        SpeedMetrics(latency = sample.latency, jitter = sample.jitter, loss = sample.loss)
+    }
+}
+
+@Composable
 private fun RouterSpeedSummary(summary: String) {
     Row(
         Modifier.fillMaxWidth(),
@@ -1077,9 +1168,9 @@ private fun SpeedNodeChips(
 }
 
 @Composable
-private fun SpeedHistoryLine(record: SpeedHistoryRecord) {
-    val stamp = if (record.epoch > 0) {
-        SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(record.epoch * 1000L))
+private fun SpeedHistoryLine(epoch: Long, record: SpeedHistoryInterface) {
+    val stamp = if (epoch > 0) {
+        SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(epoch * 1000L))
     } else {
         "--"
     }
@@ -1092,7 +1183,13 @@ private fun SpeedHistoryLine(record: SpeedHistoryRecord) {
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(stamp, fontSize = 11.sp, color = SpeedPageMuted, maxLines = 1)
-        Text("路由器 WAN", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = SpeedAccent, maxLines = 1)
+        Text(
+            speedTestInterfaceLabel(record.intf),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = SpeedAccent,
+            maxLines = 1
+        )
         Text(
             "↓ ${formatSpeedWithUnit(record.downMbps)}",
             fontSize = 11.sp,

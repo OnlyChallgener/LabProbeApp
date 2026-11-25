@@ -87,17 +87,29 @@ data class SpeedTestPort(
     val panelName: String,
     val up: Boolean,
     val speedMbps: Int,
-    val testable: Boolean
+    val testable: Boolean,
+    val wan: Boolean = true
 )
 
 data class SpeedTestNode(val id: String, val name: String)
+
+data class SpeedHistoryInterface(
+    val intf: String,
+    val downMbps: Double?,
+    val upMbps: Double?,
+    val latency: Double?,
+    val jitter: Double?,
+    val loss: Double?
+)
 
 data class SpeedHistoryRecord(
     val epoch: Long,
     val intf: String,
     val downMbps: Double?,
     val upMbps: Double?,
-    val latency: Double?
+    val latency: Double?,
+    /** Every interface result from the same Hub history row, in Hub order. */
+    val interfaces: List<SpeedHistoryInterface> = emptyList()
 )
 
 data class SpeedSampleSet(
@@ -116,8 +128,228 @@ data class SpeedSampleSet(
 data class SpeedProgress(
     val stat: String,
     val finished: Boolean,
-    val primary: SpeedSampleSet?
+    val primary: SpeedSampleSet?,
+    /** Every interface sample from the Hub, in the order reported by firmware. */
+    val interfaces: List<SpeedSampleSet> = emptyList()
 )
+
+internal data class SpeedTestInterfaceOption(
+    val id: String,
+    val label: String,
+    val interfaces: List<String>
+)
+
+internal const val SPEED_TEST_BOTH_INTERFACES = "both"
+
+private val SpeedWanName = Regex("^wan[0-9]{0,2}$")
+
+private fun number(value: Any?): Double? {
+    if (value == null || value is Boolean) return null
+    if (value is Number) return value.toDouble()
+    return value.toString().trim().toDoubleOrNull()
+}
+
+private fun JSONArray?.toSpeedSeries(): List<Double> {
+    if (this == null) return emptyList()
+    val out = ArrayList<Double>(length())
+    for (index in 0 until length()) {
+        number(opt(index))?.let { out.add(it) }
+    }
+    return out
+}
+
+internal fun speedTestSampleFrom(block: JSONObject): SpeedSampleSet = SpeedSampleSet(
+    intf = block.optString("intf").trim(),
+    down = block.optJSONArray("downspeed").toSpeedSeries(),
+    up = block.optJSONArray("upspeed").toSpeedSeries(),
+    // The Hub already reduces the trailing sample to a scalar, so prefer it
+    // and only fall back to the series when it is missing.
+    currentDown = number(block.opt("currentDown"))
+        ?: block.optJSONArray("downspeed").toSpeedSeries().lastOrNull(),
+    currentUp = number(block.opt("currentUp"))
+        ?: block.optJSONArray("upspeed").toSpeedSeries().lastOrNull(),
+    latency = number(block.opt("latency")),
+    jitter = number(block.opt("jitter")),
+    loss = number(block.opt("loss"))
+)
+
+internal fun speedTestPortsFrom(data: JSONObject): List<SpeedTestPort> {
+    val rows = data.optJSONArray("ports") ?: JSONArray()
+    val out = ArrayList<SpeedTestPort>(rows.length())
+    for (index in 0 until rows.length()) {
+        val row = rows.optJSONObject(index) ?: continue
+        val name = row.optString("name").trim()
+        val testable = row.optBoolean("testable")
+        // Older Hub releases did not expose `wan`; their testable flag was
+        // already restricted to WAN names, so retain that compatibility here.
+        val wan = if (row.has("wan")) row.optBoolean("wan") else
+            testable && SpeedWanName.matches(name.lowercase())
+        out.add(
+            SpeedTestPort(
+                portId = row.optString("portId"),
+                name = name,
+                panelName = row.optString("panelName"),
+                up = row.optBoolean("up"),
+                speedMbps = row.optInt("speedMbps"),
+                testable = testable,
+                wan = wan
+            )
+        )
+    }
+    return out
+}
+
+internal fun speedTestProgressFrom(data: JSONObject): SpeedProgress {
+    val stat = data.optString("stat").ifBlank { "idle" }
+    val interfaces = ArrayList<SpeedSampleSet>()
+    data.optJSONArray("interfaces")?.let { rows ->
+        for (index in 0 until rows.length()) {
+            rows.optJSONObject(index)?.let { interfaces.add(speedTestSampleFrom(it)) }
+        }
+    }
+    val primary = data.optJSONObject("primary")?.let { speedTestSampleFrom(it) }
+        ?: interfaces.firstOrNull()
+    return SpeedProgress(
+        stat = stat,
+        finished = stat == "end",
+        primary = primary,
+        interfaces = interfaces
+    )
+}
+
+private fun historyNumber(value: Any?): Double? = when (value) {
+    is JSONArray -> speedSeriesAverage(value.toSpeedSeries())
+    else -> number(value)
+}
+
+internal fun speedTestHistoryFrom(data: JSONObject): List<SpeedHistoryRecord> {
+    val rows = data.optJSONArray("records") ?: JSONArray()
+    val out = ArrayList<SpeedHistoryRecord>(rows.length())
+    for (index in 0 until rows.length()) {
+        val row = rows.optJSONObject(index) ?: continue
+        val interfaces = ArrayList<SpeedHistoryInterface>()
+        row.optJSONArray("interfaces")?.let { items ->
+            for (itemIndex in 0 until items.length()) {
+                val item = items.optJSONObject(itemIndex) ?: continue
+                interfaces.add(
+                    SpeedHistoryInterface(
+                        intf = item.optString("intf").trim(),
+                        downMbps = number(item.opt("currentDown"))
+                            ?: number(item.opt("downMbps"))
+                            ?: historyNumber(item.opt("downspeed")),
+                        upMbps = number(item.opt("currentUp"))
+                            ?: number(item.opt("upMbps"))
+                            ?: historyNumber(item.opt("upspeed")),
+                        latency = number(item.opt("latency")),
+                        jitter = number(item.opt("jitter")),
+                        loss = number(item.opt("loss"))
+                    )
+                )
+            }
+        }
+        val primary = row.optJSONObject("primary")?.let { item ->
+            SpeedHistoryInterface(
+                intf = item.optString("intf").trim(),
+                downMbps = number(item.opt("currentDown"))
+                    ?: number(item.opt("downMbps"))
+                    ?: historyNumber(item.opt("downspeed")),
+                upMbps = number(item.opt("currentUp"))
+                    ?: number(item.opt("upMbps"))
+                    ?: historyNumber(item.opt("upspeed")),
+                latency = number(item.opt("latency")),
+                jitter = number(item.opt("jitter")),
+                loss = number(item.opt("loss"))
+            )
+        } ?: interfaces.firstOrNull()
+        if (primary == null) continue
+        out.add(
+            SpeedHistoryRecord(
+                epoch = row.optLong("epoch"),
+                intf = primary.intf,
+                downMbps = primary.downMbps,
+                upMbps = primary.upMbps,
+                latency = primary.latency,
+                interfaces = interfaces.ifEmpty { listOf(primary) }
+            )
+        )
+    }
+    return out
+}
+
+internal fun speedTestInterfaceName(value: String): String = value.trim().lowercase()
+
+internal fun speedTestInterfaceLabel(value: String): String =
+    value.trim().uppercase(java.util.Locale.US).ifBlank { "WAN" }
+
+internal fun speedTestSamples(progress: SpeedProgress?): List<SpeedSampleSet> =
+    progress?.interfaces?.ifEmpty { listOfNotNull(progress?.primary) }.orEmpty()
+
+internal fun speedTestHistoryInterfaces(record: SpeedHistoryRecord): List<SpeedHistoryInterface> =
+    record.interfaces.ifEmpty {
+        listOf(
+            SpeedHistoryInterface(
+                intf = record.intf,
+                downMbps = record.downMbps,
+                upMbps = record.upMbps,
+                latency = record.latency,
+                jitter = null,
+                loss = null
+            )
+        )
+    }
+
+internal fun speedTestInterfaceOptions(
+    ports: List<SpeedTestPort>,
+    inventory: WanInventory? = null,
+): List<SpeedTestInterfaceOption> {
+    val unified = inventory?.selectable("speedtest")
+        ?.mapNotNull { wan -> wan.logicalInterface.takeIf { SpeedWanName.matches(it) } }
+        ?.distinct()
+        .orEmpty()
+    val available = if (unified.isNotEmpty()) {
+        unified.sortedWith(compareBy({ if (it == "wan") 0 else 1 }, { it }))
+    } else {
+        ports.filter { it.wan && it.testable }
+            .mapNotNull { port ->
+                val name = speedTestInterfaceName(port.name)
+                name.takeIf { SpeedWanName.matches(it) }
+            }
+            .distinct()
+            .sortedWith(compareBy({ if (it == "wan") 0 else 1 }, { it }))
+    }
+    if (available.isEmpty()) return emptyList()
+    val singles = available.map { SpeedTestInterfaceOption(it, speedTestInterfaceLabel(it), listOf(it)) }
+    return if (available.size > 1) {
+        singles + SpeedTestInterfaceOption(
+            id = SPEED_TEST_BOTH_INTERFACES,
+            label = available.joinToString(" + ") { speedTestInterfaceLabel(it) },
+            interfaces = available
+        )
+    } else singles
+}
+
+internal fun speedTestSelection(
+    ports: List<SpeedTestPort>,
+    selected: String,
+    inventory: WanInventory? = null,
+): List<String> {
+    val options = speedTestInterfaceOptions(ports, inventory)
+    options.firstOrNull { it.id == selected }?.let { return it.interfaces }
+    // WAN remains the default when present; the first live WAN is the fallback
+    // for single-WAN routers whose interface has a different suffix.
+    return options.firstOrNull { it.id == "wan" }?.interfaces
+        ?: options.firstOrNull()?.interfaces
+        .orEmpty()
+}
+
+internal fun speedTestStartBody(interfaces: List<String>, node: String): JSONObject {
+    val names = interfaces.map { speedTestInterfaceName(it) }.filter { it.isNotEmpty() }.distinct()
+    val nodes = JSONObject()
+    names.forEach { nodes.put(it, node) }
+    return JSONObject()
+        .put("intf", JSONArray().apply { names.forEach { put(it) } })
+        .put("nodes", nodes)
+}
 
 class SpeedTestApi(private val prefs: AppPrefs) {
     private val hubApi = HubApi(prefs)
@@ -131,53 +363,8 @@ class SpeedTestApi(private val prefs: AppPrefs) {
         return root.optJSONObject("data") ?: JSONObject()
     }
 
-    private fun number(value: Any?): Double? {
-        if (value == null || value is Boolean) return null
-        if (value is Number) return value.toDouble()
-        return value.toString().trim().toDoubleOrNull()
-    }
-
-    private fun JSONArray?.toSpeedSeries(): List<Double> {
-        if (this == null) return emptyList()
-        val out = ArrayList<Double>(length())
-        for (index in 0 until length()) {
-            number(opt(index))?.let { out.add(it) }
-        }
-        return out
-    }
-
-    private fun sampleFrom(block: JSONObject): SpeedSampleSet = SpeedSampleSet(
-        intf = block.optString("intf"),
-        down = block.optJSONArray("downspeed").toSpeedSeries(),
-        up = block.optJSONArray("upspeed").toSpeedSeries(),
-        // The Hub already reduces the trailing sample to a scalar, so prefer it
-        // and only fall back to the series when it is missing.
-        currentDown = number(block.opt("currentDown"))
-            ?: block.optJSONArray("downspeed").toSpeedSeries().lastOrNull(),
-        currentUp = number(block.opt("currentUp"))
-            ?: block.optJSONArray("upspeed").toSpeedSeries().lastOrNull(),
-        latency = number(block.opt("latency")),
-        jitter = number(block.opt("jitter")),
-        loss = number(block.opt("loss"))
-    )
-
     suspend fun ports(): List<SpeedTestPort> = withContext(Dispatchers.IO) {
-        val rows = execute("/api/router/speedtest/ports").optJSONArray("ports") ?: JSONArray()
-        val out = ArrayList<SpeedTestPort>(rows.length())
-        for (index in 0 until rows.length()) {
-            val row = rows.optJSONObject(index) ?: continue
-            out.add(
-                SpeedTestPort(
-                    portId = row.optString("portId"),
-                    name = row.optString("name"),
-                    panelName = row.optString("panelName"),
-                    up = row.optBoolean("up"),
-                    speedMbps = row.optInt("speedMbps"),
-                    testable = row.optBoolean("testable")
-                )
-            )
-        }
-        out
+        speedTestPortsFrom(execute("/api/router/speedtest/ports"))
     }
 
     suspend fun nodes(): List<SpeedTestNode> = withContext(Dispatchers.IO) {
@@ -197,42 +384,19 @@ class SpeedTestApi(private val prefs: AppPrefs) {
     }
 
     suspend fun progress(): SpeedProgress = withContext(Dispatchers.IO) {
-        val data = execute("/api/router/speedtest/progress")
-        val stat = data.optString("stat").ifBlank { "idle" }
-        SpeedProgress(
-            stat = stat,
-            finished = stat == "end",
-            primary = data.optJSONObject("primary")?.let { sampleFrom(it) }
-        )
+        speedTestProgressFrom(execute("/api/router/speedtest/progress"))
     }
 
     suspend fun history(): List<SpeedHistoryRecord> = withContext(Dispatchers.IO) {
-        val rows = execute("/api/router/speedtest/history").optJSONArray("records") ?: JSONArray()
-        val out = ArrayList<SpeedHistoryRecord>(rows.length())
-        for (index in 0 until rows.length()) {
-            val row = rows.optJSONObject(index) ?: continue
-            val primary = row.optJSONObject("primary") ?: continue
-            out.add(
-                SpeedHistoryRecord(
-                    epoch = row.optLong("epoch"),
-                    intf = primary.optString("intf"),
-                    downMbps = speedSeriesAverage(primary.optJSONArray("downspeed").toSpeedSeries())
-                        ?: number(primary.opt("currentDown")),
-                    upMbps = speedSeriesAverage(primary.optJSONArray("upspeed").toSpeedSeries())
-                        ?: number(primary.opt("currentUp")),
-                    latency = number(primary.opt("latency"))
-                )
-            )
-        }
-        out
+        speedTestHistoryFrom(execute("/api/router/speedtest/history"))
     }
 
-    suspend fun start(intf: String, node: String): Boolean = withContext(Dispatchers.IO) {
-        val body = JSONObject()
-            .put("intf", JSONArray().put(intf))
-            .put("nodes", JSONObject().put(intf, node))
-        execute("/api/router/speedtest/start", "POST", body).optBoolean("ok", true)
+    suspend fun start(interfaces: List<String>, node: String): Boolean = withContext(Dispatchers.IO) {
+        execute("/api/router/speedtest/start", "POST", speedTestStartBody(interfaces, node))
+            .optBoolean("ok", true)
     }
+
+    suspend fun start(intf: String, node: String): Boolean = start(listOf(intf), node)
 }
 
 /** Official eWeb mapping: speed thresholds map to 8 dial segments, max 2500. */
@@ -259,9 +423,16 @@ internal fun formatSpeed(mbps: Double?): String =
 
 internal fun formatSpeedWithUnit(mbps: Double?): String = "${formatSpeed(mbps)} Mbps"
 
-internal fun isSpeedTestUploadPhase(running: Boolean, progress: SpeedProgress?): Boolean {
+internal fun isSpeedTestUploadPhase(
+    running: Boolean,
+    progress: SpeedProgress?,
+    intf: String? = null
+): Boolean {
     val current = progress ?: return false
-    return running && current.stat == "running" && !current.finished && current.primary?.up?.isNotEmpty() == true
+    val sample = if (intf == null) current.primary else speedTestSamples(current).firstOrNull {
+        speedTestInterfaceName(it.intf) == speedTestInterfaceName(intf)
+    }
+    return running && current.stat == "running" && !current.finished && sample?.up?.isNotEmpty() == true
 }
 
 internal const val ROUTER_SPEED_POLL_TIMEOUT_MS = 120_000L
@@ -342,12 +513,27 @@ internal fun visibleSpeedHistory(
 internal fun speedTestCollapsedSummary(progress: SpeedProgress?, running: Boolean): String {
     if (running) return "测速进行中…"
     val current = progress ?: return "路由器直连宽带测速 · 节点可选"
+    val samples = speedTestSamples(current)
+    if (samples.size > 1) {
+        // Multi-WAN results stay separate. Adding them would invent a score the
+        // firmware never reported and could not be attributed to one interface.
+        val values = samples.map { sample ->
+            val down = if (current.finished) {
+                speedSeriesAverage(sample.down) ?: sample.currentDown
+            } else sample.currentDown
+            "${speedTestInterfaceLabel(sample.intf)} ↓ ${formatSpeed(down)} Mbps"
+        }
+        return if (values.all { it.endsWith("-- Mbps") }) {
+            "路由器直连宽带测速 · 节点可选"
+        } else values.joinToString(" · ")
+    }
+    val sample = samples.firstOrNull() ?: return "路由器直连宽带测速 · 节点可选"
     val down = if (current.finished) {
-        speedSeriesAverage(current.primary?.down.orEmpty()) ?: current.primary?.currentDown
+        speedSeriesAverage(sample.down) ?: sample.currentDown
     } else {
-        current.primary?.currentDown
+        sample.currentDown
     } ?: return "路由器直连宽带测速 · 节点可选"
-    val latency = current.primary?.latency
+    val latency = sample.latency
         ?.let { " · 时延 ${String.format(java.util.Locale.US, "%.2f", it)} ms" }
         ?: ""
     return "上次下行 ${formatSpeed(down)} Mbps$latency"
@@ -500,9 +686,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
                     nodes = api.nodes()
                     selectedNode = "0"
                 }.onFailure { current -> error = speedTestErrorText(current.message) }
-                ports.firstOrNull { it.testable }?.name?.lowercase()?.takeIf { it.isNotBlank() }?.let {
-                    selectedPort = it
-                }
+                selectedPort = speedTestSelection(ports, selectedPort).firstOrNull() ?: "wan"
                 preparing = false
             }
             // A test started from the web UI keeps its progress visible on entry.
@@ -530,6 +714,10 @@ private fun SpeedTestCard(prefs: AppPrefs) {
         }
         running = false
     }
+
+    val interfaceOptions = speedTestInterfaceOptions(ports)
+    val selectedInterfaces = speedTestSelection(ports, selectedPort)
+    val samples = speedTestSamples(progress)
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -574,9 +762,28 @@ private fun SpeedTestCard(prefs: AppPrefs) {
 
             if (expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SpeedGauge(running = running, progress = progress)
-                    SpeedMetricRow(progress)
-                    progress?.primary?.takeIf { it.down.isNotEmpty() || it.up.isNotEmpty() }?.let { SpeedChart(it) }
+                    if (samples.size > 1) {
+                        samples.forEach { sample ->
+                            SpeedInterfaceResult(sample = sample, running = running, progress = progress)
+                        }
+                    } else {
+                        val sample = samples.firstOrNull()
+                        SpeedGauge(
+                            running = running,
+                            sample = sample,
+                            isTestingUp = isSpeedTestUploadPhase(running, progress, sample?.intf)
+                        )
+                        SpeedMetricRow(sample)
+                        sample?.takeIf { it.down.isNotEmpty() || it.up.isNotEmpty() }?.let { SpeedChart(it) }
+                    }
+
+                    if (interfaceOptions.size > 1) {
+                        SpeedInterfaceSelector(
+                            options = interfaceOptions,
+                            selected = selectedPort,
+                            enabled = !running && !starting && !preparing
+                        ) { selectedPort = it }
+                    }
 
                     if (nodes.isNotEmpty()) {
                         SpeedNodeRow(nodes = nodes, selected = selectedNode, enabled = !running) { selectedNode = it }
@@ -584,7 +791,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
 
                     Button(
                         onClick = {
-                            if (running || preparing || starting) return@Button
+                            if (running || preparing || starting || selectedInterfaces.isEmpty()) return@Button
                             error = ""
                             progress = null
                             // 必须同步按住：`running` 要等 POST 回来才置真，那之间再点
@@ -593,7 +800,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
                             starting = true
                             scope.launch {
                                 try {
-                                    api.start(selectedPort, selectedNode)
+                                    api.start(selectedInterfaces, selectedNode)
                                     running = true
                                 } catch (throwable: Exception) {
                                     error = speedTestErrorText(throwable.message)
@@ -602,7 +809,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
                                 }
                             }
                         },
-                        enabled = !running && !preparing && !starting,
+                        enabled = !running && !preparing && !starting && selectedInterfaces.isNotEmpty(),
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SpeedBlue, contentColor = Color.White),
                         modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)
@@ -652,13 +859,65 @@ private fun SpeedTestCard(prefs: AppPrefs) {
 }
 
 @Composable
-private fun SpeedGauge(running: Boolean, progress: SpeedProgress?) {
-    val sample = progress?.primary
+private fun SpeedInterfaceResult(sample: SpeedSampleSet, running: Boolean, progress: SpeedProgress?) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "${speedTestInterfaceLabel(sample.intf)} · 独立测速结果",
+            style = LabTypography.SectionTitle.copy(color = SpeedInk)
+        )
+        SpeedGauge(
+            running = running,
+            sample = sample,
+            isTestingUp = isSpeedTestUploadPhase(running, progress, sample.intf)
+        )
+        SpeedMetricRow(sample)
+        if (sample.down.isNotEmpty() || sample.up.isNotEmpty()) SpeedChart(sample)
+    }
+}
+
+@Composable
+private fun SpeedInterfaceSelector(
+    options: List<SpeedTestInterfaceOption>,
+    selected: String,
+    enabled: Boolean,
+    onSelect: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("测速端口", style = LabTypography.SectionTitle.copy(color = SpeedInk))
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            options.forEach { option ->
+                val active = option.id == selected
+                val shape = RoundedCornerShape(11.dp)
+                Surface(
+                    modifier = Modifier
+                        .clip(shape)
+                        .clickable(enabled = enabled) { onSelect(option.id) },
+                    shape = shape,
+                    color = if (active) SpeedBlue.copy(alpha = .12f) else LabV2.FieldSoft,
+                    border = BorderStroke(1.dp, if (active) SpeedBlue.copy(alpha = .45f) else SpeedBorder)
+                ) {
+                    Text(
+                        option.label,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        style = LabTypography.Caption.copy(color = if (active) SpeedBlue else SpeedMuted),
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+        if (options.any { it.id == SPEED_TEST_BOTH_INTERFACES }) {
+            Text("双 WAN 分别测速，不合计速率", style = LabTypography.Caption.copy(color = SpeedMuted))
+        }
+    }
+}
+
+@Composable
+private fun SpeedGauge(running: Boolean, sample: SpeedSampleSet?, isTestingUp: Boolean) {
     val down = sample?.currentDown
     val up = sample?.currentUp
-    // During upload the firmware keeps the completed downlink samples while
-    // adding uplink samples, so scalar values alone cannot identify the phase.
-    val isTestingUp = isSpeedTestUploadPhase(running, progress)
     val activeSpeed = if (isTestingUp) up ?: 0.0 else down ?: 0.0
     val displayed = activeSpeed.toFloat().coerceAtLeast(0f)
     val targetPosition = gaugePosition(displayed).coerceIn(0f, 1f)
@@ -810,11 +1069,19 @@ private fun SpeedGauge(running: Boolean, progress: SpeedProgress?) {
                 )
 
                 Text(
-                    text = when {
-                        isTestingUp -> "上行速率 · Mbps"
-                        down != null && down > 0.0 -> "下行速率 · Mbps"
-                        running -> "实时测速 · Mbps"
-                        else -> "下行速率 · Mbps"
+                    text = buildString {
+                        sample?.intf?.takeIf { it.isNotBlank() }?.let {
+                            append(speedTestInterfaceLabel(it))
+                            append(" · ")
+                        }
+                        append(
+                            when {
+                                isTestingUp -> "上行速率 · Mbps"
+                                down != null && down > 0.0 -> "下行速率 · Mbps"
+                                running -> "实时测速 · Mbps"
+                                else -> "下行速率 · Mbps"
+                            }
+                        )
                     },
                     style = LabTypography.Caption.copy(
                         fontSize = 12.sp,
@@ -916,8 +1183,7 @@ private fun SpeedGauge(running: Boolean, progress: SpeedProgress?) {
 }
 
 @Composable
-private fun SpeedMetricRow(progress: SpeedProgress?) {
-    val primary = progress?.primary
+private fun SpeedMetricRow(sample: SpeedSampleSet?) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(10.dp),
@@ -928,11 +1194,11 @@ private fun SpeedMetricRow(progress: SpeedProgress?) {
             Modifier.fillMaxWidth().padding(vertical = 8.dp, horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            SpeedMetricInlineItem("时延", primary?.latency, "ms", Modifier.weight(1f))
+            SpeedMetricInlineItem("时延", sample?.latency, "ms", Modifier.weight(1f))
             Box(Modifier.width(1.dp).height(18.dp).background(Color(0xFFE2E8F0)))
-            SpeedMetricInlineItem("抖动", primary?.jitter, "ms", Modifier.weight(1f))
+            SpeedMetricInlineItem("抖动", sample?.jitter, "ms", Modifier.weight(1f))
             Box(Modifier.width(1.dp).height(18.dp).background(Color(0xFFE2E8F0)))
-            SpeedMetricInlineItem("丢包", primary?.loss, "%", Modifier.weight(1f))
+            SpeedMetricInlineItem("丢包", sample?.loss, "%", Modifier.weight(1f))
         }
     }
 }
@@ -970,7 +1236,10 @@ private fun SpeedChart(sample: SpeedSampleSet) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("速率波动曲线", style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold, color = SpeedInk))
+                Text(
+                    "${speedTestInterfaceLabel(sample.intf)} · 速率波动曲线",
+                    style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold, color = SpeedInk)
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     SpeedLegend(SpeedDownColor, "下行")
                     SpeedLegend(SpeedUpColor, "上行")
@@ -1082,30 +1351,39 @@ private fun SpeedHistoryRow(record: SpeedHistoryRecord) {
     val stamp = if (record.epoch > 0) {
         java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(record.epoch * 1000L))
     } else "--"
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = Color(0xFFF8FAFC),
-        border = BorderStroke(0.8.dp, Color(0xFFF1F5F9))
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(stamp, style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 11.5.sp), modifier = Modifier.width(76.dp))
-            Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "↓ ${formatSpeedWithUnit(record.downMbps)}",
-                    style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold, color = Color(0xFF0284C7)),
-                    maxLines = 1
-                )
-                Text(
-                    "↑ ${formatSpeedWithUnit(record.upMbps)}",
-                    style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold, color = Color(0xFF16A34A)),
-                    maxLines = 1
-                )
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        speedTestHistoryInterfaces(record).forEach { result ->
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = Color(0xFFF8FAFC),
+                border = BorderStroke(0.8.dp, Color(0xFFF1F5F9))
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(stamp, style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 11.5.sp), modifier = Modifier.width(76.dp))
+                    Text(
+                        speedTestInterfaceLabel(result.intf),
+                        style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold, color = SpeedBlue),
+                        maxLines = 1
+                    )
+                    Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "↓ ${formatSpeedWithUnit(result.downMbps)}",
+                            style = LabTypography.Caption.copy(fontWeight = FontWeight.Bold, color = Color(0xFF0284C7)),
+                            maxLines = 1
+                        )
+                        Text(
+                            "↑ ${formatSpeedWithUnit(result.upMbps)}",
+                            style = LabTypography.Caption.copy(fontWeight = FontWeight.SemiBold, color = Color(0xFF16A34A)),
+                            maxLines = 1
+                        )
+                    }
+                    Text("${formatSpeed(result.latency)} ms", style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 11.sp))
+                }
             }
-            Text("${formatSpeed(record.latency)} ms", style = LabTypography.Caption.copy(color = SpeedMuted, fontSize = 11.sp))
         }
     }
 }
