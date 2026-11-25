@@ -207,6 +207,18 @@ fun mergeIpv6Candidates(vararg groups: List<Ipv6AddressCandidate>): List<Ipv6Add
     )
 }
 
+const val IPV6_CANDIDATE_RETENTION_LIMIT = 3
+
+fun retainBestIpv6Candidates(vararg groups: List<Ipv6AddressCandidate>): List<Ipv6AddressCandidate> =
+    mergeIpv6Candidates(*groups)
+        .filterNot { isInvalidIpv6(it.address) || isRejectedIpv6State(it.state) || it.historical }
+        .take(IPV6_CANDIDATE_RETENTION_LIMIT)
+
+fun DeviceItem.retainIpv6Candidates(): DeviceItem {
+    val retained = retainBestIpv6Candidates(ipv6Candidates, ipv6.map(::Ipv6AddressCandidate))
+    return copy(ipv6 = retained.map { it.address }, ipv6Candidates = retained)
+}
+
 fun pickBestIpv6(addresses: List<String>, candidates: List<Ipv6AddressCandidate> = emptyList()): Ipv6PickResult {
     val rawCandidates = candidates + addresses.map { Ipv6AddressCandidate(it) }
     val normalized = mergeIpv6Candidates(rawCandidates)

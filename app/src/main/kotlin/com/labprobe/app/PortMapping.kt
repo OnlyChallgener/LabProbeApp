@@ -560,7 +560,7 @@ internal class PortMappingMemoryCache private constructor() {
         }
         pruneDevices(now)
         val retained = devices.filter { cleanMac(it.mac) in deviceSeenAt }
-        devices = mergeSharedDeviceState(retained + fresh, emptyList())
+        devices = mergeSharedDeviceState(retained + fresh, emptyList()).map(DeviceItem::retainIpv6Candidates)
         devicesUpdatedAt = now
     }
 
@@ -1367,7 +1367,7 @@ private fun PortMapMiniMetric(icon: androidx.compose.ui.graphics.vector.ImageVec
     }
 }
 
-private fun portMappingIpv6Candidates(device: DeviceItem): List<String> {
+internal fun portMappingIpv6Candidates(device: DeviceItem): List<String> {
     val eligible = mergeIpv6Candidates(
         device.ipv6Candidates,
         device.ipv6.map { Ipv6AddressCandidate(it) },
@@ -1380,7 +1380,8 @@ private fun portMappingIpv6Candidates(device: DeviceItem): List<String> {
             !state.contains("tentative")
     }.map { it.address }
     val recommended = device.pickIpv6().best?.takeIf { it in eligible }
-    return listOfNotNull(recommended) + eligible.filterNot { it == recommended }
+    return (listOfNotNull(recommended) + eligible.filterNot { it == recommended })
+        .take(IPV6_CANDIDATE_RETENTION_LIMIT)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

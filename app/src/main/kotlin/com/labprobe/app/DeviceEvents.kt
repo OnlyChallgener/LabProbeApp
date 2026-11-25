@@ -38,12 +38,12 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
         val o = oldByMac[cleanMac(n.mac)]
         if (!n.online && o != null) {
             val oldTodayValid = o.todayOnlineDate == LocalDate.now().toString()
-            val mergedIpv6 = mergeIpv6Candidates(
+            val mergedIpv6 = retainBestIpv6Candidates(
                 n.ipv6Candidates,
                 n.ipv6.map { Ipv6AddressCandidate(it) },
                 o.ipv6Candidates,
                 o.ipv6.map { Ipv6AddressCandidate(it) }
-            ).take(24)
+            )
             n.copy(
                 ip = n.ip.ifBlank { o.ip },
                 ssid = n.ssid.ifBlank { o.ssid },
@@ -85,7 +85,7 @@ fun mergeDeviceCache(old: List<DeviceItem>, fresh: List<DeviceItem>): List<Devic
         } else n
     }.toMutableList()
     old.filter { !it.online && cleanMac(it.mac) !in freshKeys }.forEach { merged += it }
-    return merged
+    return merged.map(DeviceItem::retainIpv6Candidates)
 }
 
 fun normalizeDeviceEvents(raw: List<EventItem>): List<EventItem> {

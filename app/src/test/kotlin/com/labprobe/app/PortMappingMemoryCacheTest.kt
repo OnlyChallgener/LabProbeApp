@@ -61,6 +61,24 @@ class PortMappingMemoryCacheTest {
         assertNull(active.agent)
     }
 
+    @Test
+    fun repeatedDeviceRefreshNeverAccumulatesMoreThanThreeIpv6Candidates() {
+        val cache = PortMappingMemoryCache.forScope("http://cache-ipv6:58443", "ipv6-token")
+        repeat(6) { index ->
+            val address = "2409:8a50:2e04::${index + 1}"
+            cache.mergeDevices(
+                listOf(
+                    device("NAS").copy(
+                        ipv6 = listOf(address),
+                        ipv6Candidates = listOf(Ipv6AddressCandidate(address, state = "reachable", source = "ndp")),
+                    )
+                )
+            )
+            assertTrue(cache.devices.single().ipv6.size <= 3)
+            assertTrue(cache.devices.single().ipv6Candidates.size <= 3)
+        }
+    }
+
     private fun rule(id: String) = PortMapRule(
         id = id, name = id, enabled = true, mode = "6to4", listenPort = 20000,
         targetMode = "ipv4", targetIpv4 = "192.168.5.46", targetIpv6 = "",

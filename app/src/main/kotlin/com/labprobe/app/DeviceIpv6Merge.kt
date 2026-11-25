@@ -13,11 +13,11 @@ fun mergeIpv6NeighborsFromStatus(status: JSONObject?, list: List<DeviceItem>): L
         val mac = cleanMac(d.mac)
         val matches = byMac[mac].orEmpty()
         if (matches.isEmpty()) d else {
-            val merged = mergeIpv6Candidates(
+            val merged = retainBestIpv6Candidates(
                 matches.map { it.candidate },
                 d.ipv6Candidates,
                 d.ipv6.map { Ipv6AddressCandidate(it) }
-            ).take(24)
+            )
             d.copy(ipv6 = merged.map { it.address }, ipv6Candidates = merged)
         }
     }

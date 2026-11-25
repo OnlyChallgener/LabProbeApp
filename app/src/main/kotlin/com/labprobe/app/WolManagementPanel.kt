@@ -526,17 +526,17 @@ fun mergeSharedDeviceState(watched: List<DeviceItem>, online: List<DeviceItem>):
         val old = map[key]
         map[key] = if (old == null) d else mergePreferFreshDevice(old, d)
     }
-    return map.values.toList()
+    return map.values.map(DeviceItem::retainIpv6Candidates)
 }
 
 private fun mergePreferFreshDevice(old: DeviceItem, fresh: DeviceItem): DeviceItem {
     val oldTodayValid = old.todayOnlineDate == LocalDate.now().toString()
-    val mergedIpv6 = mergeIpv6Candidates(
+    val mergedIpv6 = retainBestIpv6Candidates(
         fresh.ipv6Candidates,
         fresh.ipv6.map { Ipv6AddressCandidate(it) },
         old.ipv6Candidates,
         old.ipv6.map { Ipv6AddressCandidate(it) }
-    ).take(24)
+    )
     return fresh.copy(
         name = fresh.name.ifBlank { old.name },
         ip = fresh.ip.ifBlank { old.ip },

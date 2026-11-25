@@ -133,3 +133,8 @@
 - Analysis results use one full-width compact card with horizontal label/value rows, a real status pill, side-by-side mode/elapsed metrics and a final-response row. Do not render a diagnostic-process timeline or allow external addresses to collapse into vertical text.
 - Detection logs use a shallow blue-gray monospace surface with content-sized height up to the existing 260dp limit and internal scrolling.
 - History remains five real records with result/date on the first line and external address, protocol, actual WAN and STUN port on the second. Delete stays at the far right; rows use thin separators rather than nested cards.
+
+## November 25 — Device IPv6 candidate retention
+
+- Device IPv6 candidates are normalized, ranked and retained at shared cache/persistence boundaries. Keep at most three valid, non-historical addresses per device, with the existing best-address recommendation first in pickers.
+- The IPv6 mapping device picker independently caps visible alternatives at three. Other pages that consume only the best IPv6 address inherit the same retained source data without adding new selectors or changing device identification assets.
