@@ -3074,6 +3074,7 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
         LabProbeWorkspaceApp(
             prefs = prefs,
             routerWorkspace = currentWorkspace,
+            workspaces = visibleWorkspaces,
             onOpenRouterWorkspaces = { showPicker = true },
             initialRoute = connectionInitialRoute,
         )
@@ -3085,6 +3086,7 @@ fun LabProbeApp(initialPrefs: AppPrefs) {
 private fun LabProbeWorkspaceApp(
     prefs: AppPrefs,
     routerWorkspace: RouterWorkspace,
+    workspaces: List<RouterWorkspace>,
     onOpenRouterWorkspaces: () -> Unit,
     initialRoute: String,
 ) {
@@ -3652,6 +3654,12 @@ private fun LabProbeWorkspaceApp(
                             onAuto = { autoRefresh = it; prefs.autoRefresh = it },
                             onBack = { route = settingsReturnRoute },
                             onOpenAi = { aiSettingsReturnRoute = "settings"; route = "ai_settings" },
+                            onOpenOfficialAccount = { route = "official_account" },
+                        )
+                        "official_account" -> OfficialAccountScreen(
+                            prefs = prefs,
+                            workspaces = workspaces,
+                            onBack = { route = "settings" },
                         )
                         "ai_settings" -> AiSettingsScreen(
                             context,
@@ -3971,6 +3979,7 @@ fun ExpressiveCard(
     modifier: Modifier = Modifier,
     iconKey: String = "",
     compactTitle: Boolean = false,
+    titleFontSize: androidx.compose.ui.unit.TextUnit? = null,
     coreSurface: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -3987,7 +3996,7 @@ fun ExpressiveCard(
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
-                    fontSize = if (coreSurface) {
+                    fontSize = titleFontSize ?: if (coreSurface) {
                         if (compactTitle) LabTypography.SectionTitle.fontSize else LabTypography.CardTitle.fontSize
                     } else if (compactTitle) 14.2.sp else 15.5.sp,
                     lineHeight = if (coreSurface) {
@@ -12554,6 +12563,7 @@ fun SettingsScreen(
     onAuto: (String) -> Unit,
     onBack: () -> Unit,
     onOpenAi: () -> Unit,
+    onOpenOfficialAccount: () -> Unit,
 ) = DetailShell(
     title = "APP设置", subtitle = "连接、AI、通知、隐私与关于", onBack = onBack,
     titleStyleOverride = LabTypography.PageTitle.copy(
@@ -12561,8 +12571,6 @@ fun SettingsScreen(
         lineHeight = (LabTypography.PageTitle.lineHeight.value - 1f).coerceAtLeast(1f).sp,
     )
 ) {
-    // 直接显示真正生效的那个值。以前这里剥掉 `http://`，填 `http://192.168.1.2`
-    // 会被显示成 `192.168.1.2`，看着像把用户输入吃掉了。
     var hub by remember { mutableStateOf(prefs.hub) }
     var hubRouteId by remember { mutableStateOf(prefs.routerHubId) }
     var appToken by remember { mutableStateOf(prefs.token) }
@@ -12575,9 +12583,20 @@ fun SettingsScreen(
     var routerConfigLoading by remember { mutableStateOf(false) }
     var routerConfigSaving by remember { mutableStateOf(false) }
     var userEditedRouter by remember { mutableStateOf(false) }
+    var connectionExpanded by remember { mutableStateOf(true) }
+    var routerExpanded by remember { mutableStateOf(false) }
+    var officialAccount by remember { mutableStateOf<OfficialAccountSnapshot?>(null) }
     var msg by remember { mutableStateOf("") }
     val settingsMint = Color(0xFF10A9C8)
-    val ctx = LocalContext.current; val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val officialAccountRepository = remember(prefs.hubRoot, prefs.token) { OfficialAccountRepository(prefs) }
+
+    LaunchedEffect(officialAccountRepository) {
+        runCatching { officialAccountRepository.status() }
+            .onSuccess { officialAccount = it }
+    }
+
     fun hasVerifiedBinding(candidateHub: String, candidateToken: String): Boolean =
         prefs.hub == candidateHub && prefs.token == candidateToken &&
             prefs.verifiedHubBindingDigest == workspaceDigest(candidateHub + "|" + candidateToken)
@@ -12615,7 +12634,13 @@ fun SettingsScreen(
         }
         routerConfigLoading = false
     }
-    ExpressiveCard("连接设置", "Hub 原生 WSS 实时同步；HTTP 仅用于首次读取与重连校准。", Icons.Rounded.Link, Color(0xFF2563EB)) {
+
+    SettingsExpandableCard(
+        title = "连接设置",
+        expanded = connectionExpanded,
+        onToggle = { connectionExpanded = !connectionExpanded },
+        leading = { SettingsCardLeading(Icons.Rounded.Link, Color(0xFF2563EB)) },
+    ) {
         if (prefs.workspaceId != DEFAULT_ROUTER_WORKSPACE_ID && appToken.isBlank()) {
             Text(
                 "需先填写该路由访问令牌：输入此路由的 APP_TOKEN 后点“保存设置”。令牌仅保存在当前路由器工作区。",
@@ -12623,53 +12648,47 @@ fun SettingsScreen(
                 color = LabV2.Amber,
             )
         }
-        // 协议头做成下拉，正文只填 host:port：以前要手打 http:// 前缀，
-        // 打错一个字母就连不上，而且看不出来是协议头的问题。
-        val hubScheme = if (hub.trim().startsWith("https://", ignoreCase = true)) "https://" else "http://"
-        val hubBody = hub.trim().removePrefix("http://").removePrefix("https://")
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Hub", Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            CompactDropdown(
-                value = hubScheme,
-                options = listOf("http://", "https://"),
-                onSelect = { scheme ->
-                    hub = scheme + hubBody
-                },
-                modifier = Modifier.width(94.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            CompactTextField(
-                value = hubBody,
-                onValueChange = {
-                    hub = hubScheme + it
-                },
-                placeholder = "192.168.1.2:58443",
-                trailingIcon = { HistoryDropdown("hub", prefs) { picked -> hub = picked } },
-                modifier = Modifier.weight(1f),
-            )
-        }
+        SettingsAddressField(
+            label = "Hub 地址",
+            value = hub,
+            onValueChange = { hub = it },
+            placeholder = "192.168.1.2:58443",
+            history = { HistoryDropdown("hub", prefs) { picked -> hub = picked } },
+        )
         if (prefs.workspaceId.startsWith("local_")) {
-            LabeledInput("Hub 路由标识", "例如：be50", hubRouteId, {
-                hubRouteId = it
-            })
-            Text("独立 Hub 只需填写地址和专属令牌；路由标识可留空。",
-                style = LabTypography.Supporting, color = LabV2.InkMuted)
+            LabeledInput("Hub 路由标识", "例如：be50", hubRouteId, { hubRouteId = it })
+            Text(
+                "独立 Hub 只需填写地址和专属令牌；路由标识可留空。",
+                style = LabTypography.Supporting,
+                color = LabV2.InkMuted,
+            )
         }
-        LabeledInput("APP Token", "Hub APP_TOKEN", appToken, {
-            appToken = it
-        }, password = true)
+        SettingsPasswordField(
+            label = "APP Token",
+            value = appToken,
+            onValueChange = { appToken = it },
+            placeholder = "Hub APP_TOKEN",
+        )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("DNS", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
-                CompactTextField(dns, {
-                    dns = it
-                }, Modifier.fillMaxWidth(), placeholder = "223.5.5.5")
+                CompactTextField(dns, { dns = it }, Modifier.fillMaxWidth(), placeholder = "223.5.5.5")
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("同步", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
-                Surface(Modifier.fillMaxWidth().height(LabV2.FieldHeight), shape = LabV2.FieldShape, color = LabV2.FieldSoft, border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f))) {
+                Surface(
+                    Modifier.fillMaxWidth().height(LabV2.FieldHeight),
+                    shape = LabV2.FieldShape,
+                    color = LabV2.FieldSoft,
+                    border = BorderStroke(1.dp, LabV2.BorderStrong.copy(alpha = .78f)),
+                ) {
                     Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.WifiTethering, null, Modifier.size(16.dp), tint = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted)
+                        Icon(
+                            Icons.Rounded.WifiTethering,
+                            null,
+                            Modifier.size(16.dp),
+                            tint = if (state.realtimeDataFresh) LabV2.Green else if (state.mqttConnected) LabV2.Amber else LabV2.InkMuted,
+                        )
                         Spacer(Modifier.width(6.dp))
                         val syncLabel = if (state.realtimeFallbackActive && state.realtimeDataFresh) "备用链路更新中" else when (val realtime = state.mqttState) {
                             HubRealtimeState.Connected -> if (state.realtimeDataFresh) "实时数据正常" else if (state.lastRouterRealtimeAt > 0L) "数据暂未更新" else "等待首帧"
@@ -12677,152 +12696,176 @@ fun SettingsScreen(
                             is HubRealtimeState.Reconnecting -> "重连 ${realtime.attempt}/${realtime.maxAttempts}"
                             HubRealtimeState.Disabled -> "实时未连接"
                         }
-                        Text(syncLabel, style = LabTypography.FieldValue.copy(color = LabV2.Ink))
+                        Text(
+                            syncLabel,
+                            style = LabTypography.FieldValue.copy(color = LabV2.Ink),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
         }
-        Text("路由器配置", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
-        LabeledInput("名称", "例如：BE50", routerName, {
-            routerName = it
-            userEditedRouter = true
-        })
-        val routerScheme = if (routerAddress.trim().startsWith("https://", ignoreCase = true)) "https://" else "http://"
-        val routerBody = routerAddress.trim().removePrefix("http://").removePrefix("https://")
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("管理地址", Modifier.width(58.dp), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.70f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            CompactDropdown(
-                value = routerScheme,
-                options = listOf("http://", "https://"),
-                onSelect = { scheme ->
-                    routerAddress = scheme + routerBody
-                    userEditedRouter = true
-                },
-                modifier = Modifier.width(94.dp),
+        SettingsConnectionStatusRow(
+            settingsConnectionStatus(
+                message = msg,
+                stateMessage = state.message,
+                realtimeState = state.mqttState,
+                hubConnected = state.hubConnected,
+                mqttConnected = state.mqttConnected,
+                realtimeDataFresh = state.realtimeDataFresh,
+                lastRouterRealtimeAt = state.lastRouterRealtimeAt,
+                realtimeFallbackActive = state.realtimeFallbackActive,
             )
-            Spacer(Modifier.width(6.dp))
-            CompactTextField(
-                value = routerBody,
-                onValueChange = {
-                    routerAddress = routerScheme + it
-                    userEditedRouter = true
-                },
-                placeholder = "192.168.1.1",
-                trailingIcon = { HistoryDropdown("router_address", prefs) { picked -> routerAddress = picked; userEditedRouter = true } },
-                modifier = Modifier.weight(1f),
-            )
+        )
+    }
+
+    SettingsExpandableCard(
+        title = "路由器配置",
+        expanded = routerExpanded,
+        onToggle = { routerExpanded = !routerExpanded },
+        leading = {
+            Box(
+                Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFEBF4FD)),
+                contentAlignment = Alignment.Center,
+            ) {
+                RouterModelArtwork(routerWorkspace.model, routerWorkspace.name, routerWorkspace.routerId)
+            }
+        },
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("名称", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
+            CompactTextField(routerName, {
+                routerName = it
+                userEditedRouter = true
+            }, placeholder = "例如：BE50")
         }
+        SettingsAddressField(
+            label = "管理地址",
+            value = routerAddress,
+            onValueChange = {
+                routerAddress = it
+                userEditedRouter = true
+            },
+            placeholder = "192.168.1.1",
+            history = { HistoryDropdown("router_address", prefs) { picked -> routerAddress = picked; userEditedRouter = true } },
+        )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column(Modifier.weight(1f)) {
-                LabeledInput("账号", "路由器管理账号", routerUsername, {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("账号", style = LabTypography.FieldLabel.copy(color = LabV2.InkMuted), modifier = Modifier.padding(start = 2.dp))
+                CompactTextField(routerUsername, {
                     routerUsername = it
                     userEditedRouter = true
-                })
+                }, placeholder = "路由器管理账号")
             }
-            Column(Modifier.weight(1f)) {
-                LabeledInput("密码", if (routerPasswordConfigured) "已配置，留空不修改" else "路由器管理密码", routerPassword, {
+            SettingsPasswordField(
+                label = "密码",
+                value = routerPassword,
+                onValueChange = {
                     routerPassword = it
                     userEditedRouter = true
-                }, password = true)
-            }
-        }
-        if (routerConfigLoading) Text("正在从 Hub 读取路由器配置…", fontSize = 10.5.sp, color = LabV2.InkMuted)
-        val connectionStatus = settingsConnectionStatus(
-            message = msg,
-            stateMessage = state.message,
-            realtimeState = state.mqttState,
-            hubConnected = state.hubConnected,
-            mqttConnected = state.mqttConnected,
-            realtimeDataFresh = state.realtimeDataFresh,
-            lastRouterRealtimeAt = state.lastRouterRealtimeAt,
-            realtimeFallbackActive = state.realtimeFallbackActive,
-        )
-        val connectionColor = when (connectionStatus.tone) {
-            SettingsConnectionTone.Success -> LabV2.Green
-            SettingsConnectionTone.Connecting -> Color(0xFF2563EB)
-            SettingsConnectionTone.Warning -> LabV2.Amber
-            SettingsConnectionTone.Error -> LabV2.Red
-            SettingsConnectionTone.Neutral -> LabV2.InkMuted
-        }
-        val connectionIcon = when (connectionStatus.kind) {
-            SettingsConnectionKind.Hub -> Icons.Rounded.Link
-            SettingsConnectionKind.Token -> Icons.Rounded.Key
-            SettingsConnectionKind.Router -> Icons.Rounded.Router
-            SettingsConnectionKind.Realtime -> Icons.Rounded.Sync
-            SettingsConnectionKind.Notice -> if (connectionStatus.tone == SettingsConnectionTone.Connecting) Icons.Rounded.Sync else Icons.Rounded.Info
-            SettingsConnectionKind.Normal -> if (connectionStatus.tone == SettingsConnectionTone.Success) Icons.Rounded.CheckCircle else Icons.Rounded.Link
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-            Icon(connectionIcon, null, Modifier.size(15.dp).padding(top = 1.dp), tint = connectionColor)
-            Spacer(Modifier.width(6.dp))
-            Text(
-                connectionStatus.message,
-                color = connectionColor,
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+                },
                 modifier = Modifier.weight(1f),
+                placeholder = if (routerPasswordConfigured) "已配置，留空不修改" else "路由器管理密码",
             )
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                if (routerConfigSaving) return@Button
-                val cleanHub = normalizeHubBaseUrl(hub)
-                val cleanAppToken = appToken.trim()
-                val cleanRouterName = routerName.trim()
-                val cleanRouterAddress = routerAddress.trim()
-                val cleanRouterUsername = routerUsername.trim()
-                val cleanRouterPassword = routerPassword.trim()
-                try {
-                    val expectedName = prefs.expectedHubRouterName.ifBlank { routerWorkspace.name }
-                    state.stopRealtime()
-                    prefs.saveConnectionSettings(cleanHub, cleanAppToken, dns, hubRouteId,
-                        if (userEditedRouter) RouterConfigUpdate(cleanRouterName, cleanRouterUsername,
-                            cleanRouterAddress, cleanRouterPassword.takeIf(String::isNotBlank)) else null,
-                        expectedName)
-                    toast(ctx, "设置已保存，正在连接新地址")
-                } catch (error: Exception) {
-                    msg = "设置未保存：${uiMessageZh(error.message.orEmpty())}"
-                    scope.launch { state.startRealtime() }
-                }
-            }, modifier = Modifier.weight(1f).heightIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = settingsMint, contentColor = Color.White)) {
-                Icon(Icons.Rounded.Save, null, Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text(if (routerConfigSaving) "保存中" else "保存设置", style = LabTypography.Button, color = Color.White, maxLines = 1)
+        if (routerConfigLoading) Text("正在从 Hub 读取路由器配置…", fontSize = 10.5.sp, color = LabV2.InkMuted)
+    }
+
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = {
+            if (routerConfigSaving) return@Button
+            val cleanHub = normalizeHubBaseUrl(hub)
+            val cleanAppToken = appToken.trim()
+            val cleanRouterName = routerName.trim()
+            val cleanRouterAddress = routerAddress.trim()
+            val cleanRouterUsername = routerUsername.trim()
+            val cleanRouterPassword = routerPassword.trim()
+            try {
+                val expectedName = prefs.expectedHubRouterName.ifBlank { routerWorkspace.name }
+                state.stopRealtime()
+                prefs.saveConnectionSettings(
+                    cleanHub,
+                    cleanAppToken,
+                    dns,
+                    hubRouteId,
+                    if (userEditedRouter) RouterConfigUpdate(
+                        cleanRouterName,
+                        cleanRouterUsername,
+                        cleanRouterAddress,
+                        cleanRouterPassword.takeIf(String::isNotBlank),
+                    ) else null,
+                    expectedName,
+                )
+                toast(ctx, "设置已保存，正在连接新地址")
+            } catch (error: Exception) {
+                msg = "设置未保存：${uiMessageZh(error.message.orEmpty())}"
+                scope.launch { state.startRealtime() }
             }
-            Button(onClick = {
-                if (prefs.hub != normalizeHubBaseUrl(hub) || prefs.token != appToken.trim() ||
-                    prefs.hubDns != dns.trim() || userEditedRouter) {
-                    msg = "请先保存设置，再校准数据"
-                    return@Button
-                }
-                scope.launch {
-                    msg = "正在校准数据"
-                    runCatching {
-                        state.networkChanged()
-                        state.startRealtime()
-                        state.refreshAll(forceHealth = true, forceFull = true)
-                        if (!state.hubConnected) error(state.message)
-                    }.onSuccess {
-                        msg = ""
-                        toast(ctx, "数据校准完成")
-                    }.onFailure { msg = "校准失败：${uiMessageZh(it.message.orEmpty())}" }
-                }
-            }, modifier = Modifier.weight(1f).heightIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = settingsMint, contentColor = Color.White)) {
-                Icon(Icons.Rounded.Sync, null, Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("立即校准", style = LabTypography.Button, color = Color.White, maxLines = 1)
+        }, modifier = Modifier.weight(1f).heightIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = settingsMint, contentColor = Color.White)) {
+            Icon(Icons.Rounded.Save, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(5.dp))
+            Text(if (routerConfigSaving) "保存中" else "保存设置", style = LabTypography.Button, color = Color.White, maxLines = 1)
+        }
+        Button(onClick = {
+            if (prefs.hub != normalizeHubBaseUrl(hub) || prefs.token != appToken.trim() ||
+                prefs.hubDns != dns.trim() || userEditedRouter) {
+                msg = "请先保存设置，再校准数据"
+                return@Button
             }
+            scope.launch {
+                msg = "正在校准数据"
+                runCatching {
+                    state.networkChanged()
+                    state.startRealtime()
+                    state.refreshAll(forceHealth = true, forceFull = true)
+                    if (!state.hubConnected) error(state.message)
+                }.onSuccess {
+                    msg = ""
+                    toast(ctx, "数据校准完成")
+                }.onFailure { msg = "校准失败：${uiMessageZh(it.message.orEmpty())}" }
+            }
+        }, modifier = Modifier.weight(1f).heightIn(min = 40.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp), shape = LabV2.ButtonShape, colors = ButtonDefaults.buttonColors(containerColor = settingsMint, contentColor = Color.White)) {
+            Icon(Icons.Rounded.Sync, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("立即校准", style = LabTypography.Button, color = Color.White, maxLines = 1)
         }
     }
-    ExpressiveCard("AI 与模型", "配置 AI 模型、API 地址与密钥；密钥交由 Hub 加密托管。", Icons.Rounded.SmartToy, LabV2.Cyan) {
-        PillButton("配置 AI API", Icons.Rounded.Key, accent = settingsMint, onClick = onOpenAi)
+
+    val accountSnapshot = officialAccount
+    val officialStatus = when {
+        accountSnapshot == null -> "读取中"
+        !accountSnapshot.supported -> "不支持"
+        accountSnapshot.state == "conflict" -> "账号冲突"
+        accountSnapshot.authorized -> "已授权"
+        accountSnapshot.state == "partial" -> "部分授权"
+        accountSnapshot.state == "failed" -> "退出未完成"
+        accountSnapshot.state == "pending_unknown" -> "退出待确认"
+        else -> "未授权"
     }
+    SettingsEntryCard(
+        title = "锐捷官方账号",
+        leading = { SettingsCardLeading(Icons.Rounded.Person, Color(0xFF64748B)) },
+        trailing = {
+            Text(officialStatus, fontSize = 12.sp, color = if (accountSnapshot?.authorized == true) LabV2.Green else LabV2.InkMuted)
+            Icon(Icons.Rounded.ChevronRight, "打开锐捷官方账号", Modifier.size(20.dp), tint = LabV2.Primary)
+        },
+        onClick = onOpenOfficialAccount,
+    )
+    SettingsEntryCard(
+        title = "AI 与模型",
+        leading = { SettingsCardLeading(Icons.Rounded.SmartToy, LabV2.Cyan) },
+        onClick = onOpenAi,
+    )
+
     var privacy by remember { mutableStateOf(prefs.privacyMode) }
-    ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, LabV2.Cyan) {
+    ExpressiveCard("隐私模式", "隐藏首页公网 IPv4 / IPv6 / VPN-STUN 地址，点击复制仍复制真实地址。", Icons.Rounded.VisibilityOff, LabV2.Cyan, titleFontSize = 14.5.sp) {
         PillButton(if (privacy) "关闭隐私模式" else "开启隐私模式", Icons.Rounded.VpnKey, accent = settingsMint) {
             privacy = !privacy
             prefs.privacyMode = privacy
         }
     }
-    ExpressiveCard("关于", "Kotlin + Compose · Material 3 Expressive × One UI", Icons.Rounded.Info, Color(0xFF64748B)) {
+    ExpressiveCard("关于", "Kotlin + Compose · Material 3 Expressive × One UI", Icons.Rounded.Info, Color(0xFF64748B), titleFontSize = 14.5.sp) {
         Text("极客网探\n版本 ${AppVersion.NAME} build ${AppVersion.CODE}\n${AppVersion.CHANGELOG.firstOrNull()?.first.orEmpty()}", color = MaterialTheme.colorScheme.onSurface.copy(alpha = .70f), fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp, lineHeight = 19.sp)
     }
 }

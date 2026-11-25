@@ -131,6 +131,13 @@
 - Device IPv6 candidates are normalized, ranked and retained at shared cache/persistence boundaries. Keep at most three valid, non-historical addresses per device, with the existing best-address recommendation first in pickers.
 - The IPv6 mapping device picker independently caps visible alternatives at three. Other pages that consume only the best IPv6 address inherit the same retained source data without adding new selectors or changing device identification assets.
 
+## November 25 — APP settings and global official account
+
+- Settings order is connection, router configuration, global Ruijie official account, AI, privacy and about. Connection defaults expanded; router configuration defaults collapsed. Collapsed cards contain only the existing icon, title and expand arrow.
+- Hub and router management addresses use a full-width field with history action and an external HTTPS checkbox. Password fields start masked and provide an internal eye toggle. DNS and sync remain equal-width/height 48dp fields with the existing 14dp corners.
+- Save and Calibrate remain available below both expandable cards. Section titles use 14.5sp, one step below the previous 15.5sp; privacy and about retain their original layout, icons and content.
+- The official account is global across routers/Hubs. Its secondary page shows only real authorization, project/router counts, per-HUB sync state and reliable expiry; partial logout must remain visibly incomplete.
+
 ## November 25 — Centered dialog background refinement
 
 - Centered alert, editor and popup cards use opaque white `#FFFFFF` by default, superseding the earlier blue-cyan-white dialog gradient exception. Explicit caller-provided `color` or `containerColor` values take precedence.
