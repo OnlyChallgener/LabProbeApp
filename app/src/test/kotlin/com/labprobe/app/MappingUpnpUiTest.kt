@@ -11,6 +11,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -215,6 +216,14 @@ class MappingUpnpUiTest {
         compose.onNodeWithText("Plex").assertIsDisplayed()
         compose.onNodeWithText("NAT-PMP Mapping").assertIsDisplayed()
         compose.onAllNodesWithText("已映射").assertCountEquals(3)
+        val headingBounds = compose.onNodeWithText("动态映射").fetchSemanticsNode().boundsInRoot
+        val refreshBounds = compose.onAllNodesWithContentDescription("刷新")
+            .fetchSemanticsNodes()
+            .map { it.boundsInRoot }
+        assertTrue(
+            "refresh must share the dynamic-mapping header row",
+            refreshBounds.any { it.top < headingBounds.bottom && it.bottom > headingBounds.top },
+        )
         compose.onNodeWithContentDescription("新建端口映射").assertIsNotDisplayed()
         compose.onNodeWithContentDescription("新建IPv6映射").assertIsNotDisplayed()
     }

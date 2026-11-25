@@ -124,3 +124,5 @@
 - Diagnostic process and analysis results share a 42:58 row. The process column uses a shallow blue-gray timeline with real task/log timestamps only; the result column uses compact wrapped value tiles and a real status pill.
 - Detection logs use a shallow blue-gray monospace surface with content-sized height up to the existing 260dp limit and internal scrolling.
 - History remains five real records with result/date on the first line and external address, protocol, actual WAN and STUN port on the second. Delete stays at the far right; rows use thin separators rather than nested cards.
+
+- The UPnP service card uses the supplied blue/cyan router illustration. Its refresh action belongs at the right edge of the dynamic-mapping section header, not beside the service switch.

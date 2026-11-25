@@ -56,6 +56,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -956,7 +957,12 @@ private fun UpnpPage(prefs: AppPrefs) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                             Box(Modifier.size(36.dp).clip(CircleShape).background(RouterCyan.copy(alpha = .10f)), contentAlignment = Alignment.Center) {
-                                RouterGlyphIcon(RouterGlyph.Upnp, RouterCyan, Modifier.size(20.dp))
+                                Image(
+                                    painter = painterResource(R.drawable.upnp_router),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(28.dp),
+                                    contentScale = ContentScale.Fit,
+                                )
                             }
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text("UPnP 服务", fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = RouterInk, maxLines = 1)
@@ -964,11 +970,6 @@ private fun UpnpPage(prefs: AppPrefs) {
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            IconButton(
-                                onClick = { scope.launch { repository.refreshUpnp(true) } },
-                                enabled = !resource.refreshing,
-                                modifier = Modifier.size(30.dp),
-                            ) { LabRefreshIcon(resource.refreshing, Modifier.size(16.dp), RouterBlue) }
                             Switch(
                                 checked = state.enabled,
                                 enabled = !resource.mutating,
@@ -1002,7 +1003,20 @@ private fun UpnpPage(prefs: AppPrefs) {
             if (error.isNotBlank()) item { CompactMessage(error, RouterAmber) }
             if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
             if (resource.value == null) item { CompactMessage("UPnP 快照正在后台预加载", RouterBlue) }
-            item { Text("动态映射", fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = RouterInk, modifier = Modifier.padding(start = 2.dp, top = 2.dp)) }
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 2.dp, top = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("动态映射", fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Bold, color = RouterInk)
+                    IconButton(
+                        onClick = { scope.launch { repository.refreshUpnp(true) } },
+                        enabled = !resource.refreshing,
+                        modifier = Modifier.size(30.dp),
+                    ) { LabRefreshIcon(resource.refreshing, Modifier.size(16.dp), RouterBlue) }
+                }
+            }
             if (resource.value != null && state.mappings.isEmpty()) item { CompactEmpty("暂无动态映射", "内网设备申请 UPnP 端口后会显示在这里", RouterGlyph.Upnp, null) }
             items(state.mappings, key = { "${it.clientIp}|${it.protocol}|${it.internalPort}|${it.externalPort}|${it.name}" }) { row ->
                 UpnpRuleCard(row, devices, favoriteHints, mappingStatus, mappingStatusColor)
