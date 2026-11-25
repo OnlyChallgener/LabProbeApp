@@ -12,6 +12,7 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -100,7 +101,7 @@ class NatDiagnosticLayoutTest {
                             leadingIcon = Icons.Rounded.Public,
                         )
                     }
-                    NatDiagnosticColumns(task = task, result = result, loading = false)
+                    NatResultCard(task = task, result = result, loading = false, modifier = Modifier.fillMaxWidth())
                     NatHistoryRow(item = result, onDelete = {})
                 }
             }
@@ -114,22 +115,20 @@ class NatDiagnosticLayoutTest {
         compose.onNodeWithText("STUN 端口").assertIsDisplayed()
         compose.onNodeWithText("STUN 类型").assertIsDisplayed()
         compose.onNodeWithText("WAN 类型").assertIsDisplayed()
-        compose.onNodeWithText("诊断过程").assertIsDisplayed()
         compose.onNodeWithText("分析结果").assertIsDisplayed()
+        compose.onAllNodesWithText("诊断过程").assertCountEquals(0)
         compose.onNodeWithText("36.157.252.48:16871 · RFC3489 · WAN · 3478 端口").assertIsDisplayed()
 
         val labelBounds = compose.onNodeWithText("STUN 服务器").fetchSemanticsNode().boundsInRoot
         val valueBounds = compose.onNodeWithText("stun.voip.aebc.com").fetchSemanticsNode().boundsInRoot
         assertTrue("parameter label must sit above the field", labelBounds.bottom <= valueBounds.top)
 
-        val processBounds = compose.onNodeWithText("诊断过程").onParent().fetchSemanticsNode().boundsInRoot
         val resultBounds = compose.onNodeWithText("分析结果").onParent().fetchSemanticsNode().boundsInRoot
-        assertTrue("diagnostic columns must be side by side", processBounds.right < resultBounds.left)
-        val totalWidth = resultBounds.right - processBounds.left
-        val ratio = processBounds.width.toFloat() / totalWidth.toFloat()
-        assertTrue("diagnostic ratio expected near 42:58, got $ratio", ratio in .36f..48f)
-
         val rootBounds = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        assertTrue(
+            "analysis result must use the full content width",
+            resultBounds.width >= rootBounds.width * .8f,
+        )
         compose.onAllNodesWithText("36.157.252.48:16871").fetchSemanticsNodes().forEach { node ->
             assertTrue(node.boundsInRoot.left >= rootBounds.left - 1 && node.boundsInRoot.right <= rootBounds.right + 1)
         }
@@ -138,7 +137,8 @@ class NatDiagnosticLayoutTest {
             .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
         assertTrue(layouts.isNotEmpty())
         val layout = layouts.single()
-        assertEquals("36.157.252.48:16871".length, layout.getLineEnd(layout.lineCount - 1, visibleEnd = true))
+        assertEquals("external address must stay on one horizontal line", 1, layout.lineCount)
+        assertEquals("36.157.252.48:16871".length, layout.getLineEnd(0, visibleEnd = true))
     }
 
     @Test fun layoutFitsAt360dp() {

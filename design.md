@@ -126,3 +126,10 @@
 - History remains five real records with result/date on the first line and external address, protocol, actual WAN and STUN port on the second. Delete stays at the far right; rows use thin separators rather than nested cards.
 
 - The UPnP service card uses the supplied blue/cyan router illustration. Its refresh action belongs at the right edge of the dynamic-mapping section header, not beside the service switch.
+
+## November 25 — NAT diagnostic density refinement
+
+- NAT parameters use a 2×2 grid with the left column slightly wider. Labels sit above the fields; fields contain only the blue icon, value and required arrow. The start action remains full-width with the existing blue gradient.
+- Analysis results use one full-width compact card with horizontal label/value rows, a real status pill, side-by-side mode/elapsed metrics and a final-response row. Do not render a diagnostic-process timeline or allow external addresses to collapse into vertical text.
+- Detection logs use a shallow blue-gray monospace surface with content-sized height up to the existing 260dp limit and internal scrolling.
+- History remains five real records with result/date on the first line and external address, protocol, actual WAN and STUN port on the second. Delete stays at the far right; rows use thin separators rather than nested cards.

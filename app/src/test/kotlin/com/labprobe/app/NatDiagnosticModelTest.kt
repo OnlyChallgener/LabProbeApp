@@ -1,59 +1,29 @@
 package com.labprobe.app
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 class NatDiagnosticModelTest {
     @Test
-    fun idleTaskDoesNotFabricateCompletedStages() {
-        val items = natTimelineItems(RouterTaskSnapshot.idle("nat"), RouterNatResult())
-        assertTrue(items.all { it.state == NatStageState.PENDING })
-        assertTrue(items.all { it.timestamp == 0L })
+    fun statusLabelsStayReadableForTaskStates() {
+        assertEquals("等待检测", natStatusZh("idle"))
+        assertEquals("检测中", natStatusZh("running"))
+        assertEquals("检测完成", natStatusZh("success"))
+        assertEquals("检测失败", natStatusZh("failed"))
     }
 
     @Test
-    fun queuedTaskMarksOnlyRequestStageCurrent() {
-        val task = RouterTaskSnapshot(kind = "nat", state = "queued", stage = "queued", startedAt = 100L)
-        val items = natTimelineItems(task, RouterNatResult())
-        assertEquals(NatStageState.CURRENT, items[0].state)
-        assertEquals(NatStageState.PENDING, items[1].state)
-        assertEquals(NatStageState.PENDING, items[2].state)
+    fun historyDateUsesTheRealRecordTimestamp() {
+        val timestamp = 1_795_258_821L
+        val expected = SimpleDateFormat("MM-dd HH:mm:ss", Locale.US)
+            .format(java.util.Date(timestamp * 1000L))
+        assertEquals(expected, natHistoryDate(timestamp))
     }
 
     @Test
-    fun completedTaskUsesRealLogAndResultTimestamps() {
-        val task = RouterTaskSnapshot(
-            kind = "nat",
-            state = "succeeded",
-            stage = "finished",
-            startedAt = 100L,
-            updatedAt = 121L,
-            elapsedSeconds = 21L,
-            log = listOf("2026-11-12 10:40:07 [NAT 检测] 开始"),
-        )
-        val result = RouterNatResult(status = "completed", timestamp = 121L, natType = "port-restricted cone")
-        val items = natTimelineItems(task, result)
-        assertTrue(items.all { it.state == NatStageState.DONE })
-        assertEquals(100L, items[0].timestamp)
-        assertTrue(items[1].timestamp > 0L)
-        assertEquals(121L, items[2].timestamp)
-    }
-
-    @Test
-    fun submitFailureDoesNotFabricateRequestStage() {
-        val task = RouterTaskSnapshot(kind = "nat", state = "failed", stage = "submit_failed")
-        val items = natTimelineItems(task, RouterNatResult())
-        assertEquals(NatStageState.FAILED, items[0].state)
-        assertEquals(NatStageState.PENDING, items[1].state)
-        assertEquals(NatStageState.FAILED, items[2].state)
-    }
-
-    @Test
-    fun failedTaskNeverMarksResultComplete() {
-        val task = RouterTaskSnapshot(kind = "nat", state = "failed", stage = "router_running", startedAt = 100L)
-        val items = natTimelineItems(task, RouterNatResult())
-        assertEquals(NatStageState.FAILED, items[2].state)
-        assertTrue(items.none { it.state == NatStageState.DONE && it.title == "结果完成" })
+    fun missingHistoryTimestampDoesNotInventADate() {
+        assertEquals("--", natHistoryDate(0L))
     }
 }

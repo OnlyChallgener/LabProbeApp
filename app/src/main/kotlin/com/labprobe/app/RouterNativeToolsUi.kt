@@ -86,7 +86,7 @@ private fun natTypeZh(value: String): String = when (value.trim().lowercase()) {
     else -> if (value.any { it.code > 127 }) value else "未知 NAT 类型"
 }
 
-private fun natStatusZh(value: String): String = when (value.trim().lowercase()) {
+internal fun natStatusZh(value: String): String = when (value.trim().lowercase()) {
     "idle" -> "等待检测"
     "running", "detecting", "started" -> "检测中"
     "completed", "success" -> "检测完成"
@@ -705,7 +705,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
         if (error.isNotBlank()) NativeMessage(error, NativeRed)
 
-        NatDiagnosticColumns(task = task, result = result, loading = loading)
+        NatResultCard(result = result, task = task, loading = loading, modifier = Modifier.fillMaxWidth())
 
         if (result.log.isNotBlank()) {
             NativeCard {
@@ -742,162 +742,6 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 }
 
-internal enum class NatStageState { DONE, CURRENT, PENDING, FAILED }
-
-internal data class NatTimelineItem(
-    val title: String,
-    val detail: String,
-    val timestamp: Long,
-    val state: NatStageState,
-)
-
-internal fun natTimelineItems(task: RouterTaskSnapshot, result: RouterNatResult): List<NatTimelineItem> {
-    val started = task.state != "idle" && task.startedAt > 0L
-    val firstTime = task.startedAt.takeIf { it > 0L } ?: 0L
-    val natTime = natLogTimestamp(task.log + result.log.lines(), "[NAT 检测]", "[NAT Detection]")
-    val finishedTime = result.timestamp.takeIf { it > 0L } ?: task.updatedAt.takeIf { task.succeeded && it > 0L } ?: 0L
-    val firstDone = started || task.active || task.succeeded || (task.failed && task.startedAt > 0L)
-    val secondDone = task.succeeded || task.stage in setOf("router_running", "router_response", "result", "finished") ||
-        task.failed && task.startedAt > 0L
-    return listOf(
-        NatTimelineItem(
-            title = "STUN 请求",
-            detail = "向 STUN 服务器发送请求",
-            timestamp = firstTime,
-            state = when {
-                task.state == "queued" -> NatStageState.CURRENT
-                task.failed && !firstDone -> NatStageState.FAILED
-                firstDone -> NatStageState.DONE
-                task.active -> NatStageState.CURRENT
-                else -> NatStageState.PENDING
-            },
-        ),
-        NatTimelineItem(
-            title = "NAT 检测",
-            detail = "执行 NAT 类型检测",
-            timestamp = natTime,
-            state = when {
-                task.state == "queued" -> NatStageState.PENDING
-                task.succeeded -> NatStageState.DONE
-                task.failed && secondDone -> NatStageState.FAILED
-                secondDone -> NatStageState.DONE
-                firstDone && task.active -> NatStageState.CURRENT
-                else -> NatStageState.PENDING
-            },
-        ),
-        NatTimelineItem(
-            title = "结果完成",
-            detail = if (task.failed) "检测未完成，请查看日志" else "检测完成，已获得最终结果",
-            timestamp = finishedTime,
-            state = when {
-                task.succeeded -> NatStageState.DONE
-                task.failed -> NatStageState.FAILED
-                else -> NatStageState.PENDING
-            },
-        ),
-    )
-}
-
-private fun natLogTimestamp(lines: List<String>, vararg markers: String): Long {
-    val line = lines.firstOrNull { candidate -> markers.any { candidate.contains(it, ignoreCase = true) } } ?: return 0L
-    val value = line.take(19)
-    return runCatching { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(value)?.time?.div(1000L) }.getOrNull() ?: 0L
-}
-
-@Composable
-internal fun NatDiagnosticColumns(
-    task: RouterTaskSnapshot,
-    result: RouterNatResult,
-    loading: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        NatProcessCard(task = task, result = result, loading = loading, modifier = Modifier.weight(.42f))
-        NatResultCard(result = result, task = task, loading = loading, modifier = Modifier.weight(.58f))
-    }
-}
-
-@Composable
-internal fun NatProcessCard(
-    task: RouterTaskSnapshot,
-    result: RouterNatResult,
-    loading: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
-        color = Color(0xFFEDF4FB),
-        border = BorderStroke(1.dp, NativeBorder),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.Radar, null, tint = NativeBlue, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("诊断过程", fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = NativeInk)
-            }
-            if (loading && task.state == "idle") {
-                Text("等待任务状态", fontSize = 11.sp, lineHeight = 15.sp, color = NativeMuted)
-            } else {
-                natTimelineItems(task, result).forEachIndexed { index, item ->
-                    Row(Modifier.fillMaxWidth()) {
-                        Column(Modifier.width(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            val color = when (item.state) {
-                                NatStageState.DONE -> NativeBlue
-                                NatStageState.CURRENT -> NativeCyan
-                                NatStageState.FAILED -> NativeRed
-                                NatStageState.PENDING -> Color(0xFFB9C9D9)
-                            }
-                            Box(
-                                Modifier.size(14.dp).clip(CircleShape).background(color),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                when (item.state) {
-                                    NatStageState.DONE -> Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(10.dp))
-                                    NatStageState.CURRENT -> Box(Modifier.size(5.dp).clip(CircleShape).background(Color.White))
-                                    NatStageState.FAILED -> Icon(Icons.Rounded.Close, null, tint = Color.White, modifier = Modifier.size(10.dp))
-                                    NatStageState.PENDING -> Unit
-                                }
-                            }
-                            if (index < 2) {
-                                Spacer(Modifier.height(3.dp))
-                                Box(Modifier.width(2.dp).height(30.dp).background(Color(0xFFCFDFEE)))
-                            }
-                        }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                                Text(
-                                    item.title,
-                                    fontSize = 11.5.sp,
-                                    lineHeight = 15.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = NativeInk,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (item.timestamp > 0L) {
-                                    Text(
-                                        SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(item.timestamp * 1000L)),
-                                        fontSize = 9.5.sp,
-                                        lineHeight = 15.sp,
-                                        color = NativeMuted,
-                                    )
-                                }
-                            }
-                            Text(
-                                item.detail,
-                                fontSize = 10.5.sp,
-                                lineHeight = 14.sp,
-                                color = NativeMuted,
-                                softWrap = true,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 @Composable
 internal fun NatResultCard(
     result: RouterNatResult,
@@ -920,57 +764,56 @@ internal fun NatResultCard(
     }
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
+        shape = LabCoreSurface.CardShape,
         color = Color.White,
         border = BorderStroke(1.dp, NativeBorder),
         shadowElevation = 2.dp,
     ) {
-        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.CheckCircle, null, tint = NativeBlue, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("分析结果", fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = NativeInk, modifier = Modifier.weight(1f))
+                Icon(Icons.Rounded.CheckCircle, null, tint = NativeBlue, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("分析结果", fontSize = 14.sp, lineHeight = 18.sp, fontWeight = FontWeight.SemiBold, color = NativeInk, modifier = Modifier.weight(1f))
                 Surface(shape = RoundedCornerShape(99.dp), color = statusColor.copy(alpha = .10f)) {
                     Row(
-                        Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Box(Modifier.size(4.dp).clip(CircleShape).background(statusColor))
-                        Spacer(Modifier.width(3.dp))
-                        Text(statusText, fontSize = 9.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = statusColor, maxLines = 1)
+                        Spacer(Modifier.width(4.dp))
+                        Text(statusText, fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.SemiBold, color = statusColor, maxLines = 1)
                     }
                 }
             }
             if (result.mode == "5780") {
-                NatResultTile("映射行为", natMappingBehaviorZh(result.mappingBehavior), Icons.Rounded.SwapHoriz, Modifier.fillMaxWidth())
-                NatResultTile("过滤行为", natFilteringBehaviorZh(result.filteringBehavior), Icons.Rounded.FilterAlt, Modifier.fillMaxWidth())
+                NatResultRow("映射行为", natMappingBehaviorZh(result.mappingBehavior), Icons.Rounded.SwapHoriz)
+                NatResultRow("过滤行为", natFilteringBehaviorZh(result.filteringBehavior), Icons.Rounded.FilterAlt)
                 if (result.otherAddress.isNotBlank()) {
-                    NatResultTile("其他地址", result.otherAddress, Icons.Rounded.Public, Modifier.fillMaxWidth())
+                    NatResultRow("其他地址", result.otherAddress, Icons.Rounded.Public)
                 }
             } else {
-                NatResultTile("NAT 类型", natTypeZh(result.natType), Icons.Rounded.Layers, Modifier.fillMaxWidth())
+                NatResultRow("NAT 类型", natTypeZh(result.natType), Icons.Rounded.Layers)
             }
-            NatResultTile(
+            NatResultRow(
                 "外网地址",
                 result.externalAddress.ifBlank {
                     if (result.externalIp.isBlank()) "--" else result.externalIp +
                         if (result.externalPort > 0) ":${result.externalPort}" else ""
                 },
                 Icons.Rounded.Public,
-                Modifier.fillMaxWidth(),
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                NatResultTile("检测模式", if (result.mode == "5780") "RFC 5780" else "RFC 3489", Icons.Rounded.Description, Modifier.weight(1f))
-                NatResultTile("检测耗时", "${result.elapsedSeconds} 秒", Icons.Rounded.Schedule, Modifier.weight(1f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                NatResultMetric("检测模式", if (result.mode == "5780") "RFC 5780" else "RFC 3489", Icons.Rounded.Description, Modifier.weight(1f))
+                NatResultMetric("检测耗时", "${result.elapsedSeconds} 秒", Icons.Rounded.Schedule, Modifier.weight(1f))
             }
             HorizontalDivider(color = NativeBorder.copy(alpha = .8f))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Rounded.SwapHoriz, null, tint = NativeBlue, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("最终响应", fontSize = 10.5.sp, color = NativeMuted, modifier = Modifier.weight(1f))
+                Icon(Icons.Rounded.SwapHoriz, null, tint = NativeBlue, modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("最终响应", fontSize = 11.5.sp, color = NativeMuted, modifier = Modifier.weight(1f))
                 Text(
                     if (result.lastRouterResponseAt > 0L) "已收到" else "--",
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = NativeInk,
                 )
@@ -980,7 +823,42 @@ internal fun NatResultCard(
 }
 
 @Composable
-private fun NatResultTile(
+private fun NatResultRow(
+    label: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = LabV2.FieldSoft,
+        border = BorderStroke(1.dp, NativeBorder.copy(alpha = .75f)),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 9.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Icon(icon, null, tint = NativeBlue, modifier = Modifier.size(15.dp))
+            Text(label, fontSize = 11.5.sp, lineHeight = 16.sp, color = NativeMuted, maxLines = 1)
+            Text(
+                value,
+                fontSize = 12.5.sp,
+                lineHeight = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = NativeInk,
+                softWrap = true,
+                maxLines = 3,
+                overflow = TextOverflow.Clip,
+                textAlign = TextAlign.End,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun NatResultMetric(
     label: String,
     value: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -992,22 +870,16 @@ private fun NatResultTile(
         color = LabV2.FieldSoft,
         border = BorderStroke(1.dp, NativeBorder.copy(alpha = .75f)),
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = NativeBlue, modifier = Modifier.size(13.dp))
-                Spacer(Modifier.width(4.dp))
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(icon, null, tint = NativeBlue, modifier = Modifier.size(14.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(label, fontSize = 10.sp, lineHeight = 13.sp, color = NativeMuted, maxLines = 1)
+                Text(value, fontSize = 11.5.sp, lineHeight = 15.sp, fontWeight = FontWeight.SemiBold, color = NativeInk, maxLines = 1)
             }
-            Text(
-                value,
-                fontSize = 11.5.sp,
-                lineHeight = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = NativeInk,
-                softWrap = true,
-                maxLines = 3,
-                overflow = TextOverflow.Clip,
-            )
         }
     }
 }
@@ -1060,7 +932,7 @@ internal fun NatHistoryRow(item: RouterNatResult, onDelete: () -> Unit) {
     }
 }
 
-private fun natHistoryDate(timestamp: Long): String =
+internal fun natHistoryDate(timestamp: Long): String =
     if (timestamp <= 0L) "--" else SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date(timestamp * 1000L))
 
 private const val ROUTER_BETA_SNAPSHOT_PREF = "router_beta_snapshot_v1"
