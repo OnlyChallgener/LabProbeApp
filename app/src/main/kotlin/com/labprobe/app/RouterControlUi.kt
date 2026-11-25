@@ -1745,6 +1745,8 @@ internal fun labProbeDdnsMenuLabels(enabled: Boolean): List<String> = listOf(
     "删除",
 )
 
+internal fun labProbeDdnsWanLabel(wanId: String): String = wanId.trim().uppercase(Locale.ROOT)
+
 private fun labProbeAddressStateLabel(state: String): String = when (state.lowercase(Locale.ROOT)) {
     "public" -> "公网"
     "cgnat" -> "CGNAT"
@@ -1826,6 +1828,7 @@ private fun labProbeCanUpdate(record: LabProbeDdnsRecord, address: LabProbeDdnsA
 private fun LabProbeDdnsSection(prefs: AppPrefs) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val resource by repository.labProbeDdns.collectAsState()
+    val wanResource by repository.wans.collectAsState()
     val snapshot = resource.value
     val rows = snapshot?.records.orEmpty()
     val scope = repository.commandScope
@@ -1835,12 +1838,15 @@ private fun LabProbeDdnsSection(prefs: AppPrefs) {
     var detailId by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<LabProbeDdnsRecord?>(null) }
 
-    LaunchedEffect(repository) { repository.refreshLabProbeDdns(false) }
+    LaunchedEffect(repository) {
+        repository.refreshWans()
+        repository.refreshLabProbeDdns(false)
+    }
     CompactToolbar(
         title = "LabProbe DDNS",
         subtitle = "独立于路由器原生 DDNS",
         loading = resource.refreshing,
-        onRefresh = { scope.launch { repository.refreshLabProbeDdns(true) } },
+        onRefresh = { scope.launch { repository.refreshWans(); repository.refreshLabProbeDdns(true) } },
         onAdd = { adding = true },
     )
     val error = actionError.ifBlank { resource.error }
@@ -1869,6 +1875,7 @@ private fun LabProbeDdnsSection(prefs: AppPrefs) {
                 LabProbeDdnsEditorPage(
                     initial = editing ?: LabProbeDdnsRecord(provider = "cloudflare"),
                     providers = snapshot?.providers.orEmpty(),
+                    wanInventory = wanResource.value,
                     externalError = actionError,
                     onBack = { adding = false; editing = null },
                 ) { record, credentials ->
@@ -1978,6 +1985,7 @@ private fun LabProbeDdnsCard(
                 Text("${labProbeProviderLabel(record.provider)} · ${record.recordTypes.joinToString(" / ")}", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
                 Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
                     TinyBadge(labProbeStatusLabel(record.status), accent)
+                    if (record.wanId.isNotBlank()) TinyBadge("线路 ${labProbeDdnsWanLabel(record.wanId)}", RouterBlue)
                     Text(if (record.enabled) "已启用" else "已停用", fontSize = LabTypography.Caption.fontSize, color = if (record.enabled) RouterGreen else RouterMuted, fontWeight = FontWeight.SemiBold)
                 }
             }
@@ -2054,6 +2062,9 @@ private fun LabProbeDdnsDetailPage(
                     Column(Modifier.weight(1f)) {
                         LabProbeCopyableValue(record.hostname, "未命名 DDNS 记录", textSize = LabTypography.Value.fontSize)
                         Text(if (record.enabled) "已启用 · ${record.recordTypes.joinToString(" / ")}" else "已停用", fontSize = LabTypography.Caption.fontSize, color = RouterMuted, fontWeight = FontWeight.SemiBold)
+                        if (record.wanId.isNotBlank()) {
+                            Text("线路 ${labProbeDdnsWanLabel(record.wanId)}", fontSize = LabTypography.Caption.fontSize, color = RouterBlue, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                     TinyBadge(labProbeStatusLabel(record.status), labProbeStatusColor(record.status))
                 }
@@ -2224,12 +2235,17 @@ private fun LabProbeDetectedRow(label: String, value: String, state: String, sou
 private fun LabProbeDdnsEditorPage(
     initial: LabProbeDdnsRecord,
     providers: List<LabProbeDdnsProvider>,
+    wanInventory: WanInventory?,
     externalError: String,
     onBack: () -> Unit,
     onSave: (LabProbeDdnsRecord, Map<String, String>) -> Unit,
 ) {
     val normalized = remember(initial) { initial.copy(provider = initial.provider.ifBlank { "cloudflare" }, recordTypes = normalizeLabProbeRecordTypes(initial.recordTypes)) }
     var record by remember(normalized) { mutableStateOf(normalized) }
+    val wanEditorState = labProbeDdnsWanEditorState(record, wanInventory)
+    LaunchedEffect(wanEditorState.selectedWanId) {
+        if (record.wanId != wanEditorState.selectedWanId) record = record.copy(wanId = wanEditorState.selectedWanId)
+    }
     var credentialValues by remember(normalized.id, normalized.provider) { mutableStateOf(emptyMap<String, String>()) }
     var showSecret by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
@@ -2253,6 +2269,11 @@ private fun LabProbeDdnsEditorPage(
             credentialValues = emptyMap()
         }
         CompactField("域名", record.hostname, "例如 home.example.com") { record = record.copy(hostname = it.take(253)) }
+        if (wanEditorState.showSelector) {
+            CompactChoice("线路", wanEditorState.selectedWanId, wanEditorState.options, display = ::labProbeDdnsWanLabel) {
+                record = record.copy(wanId = it)
+            }
+        }
         Text("记录类型", fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.SemiBold, color = RouterMuted)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
             CompactSegment("IPv4 / A", record.recordTypes.contains("A"), Modifier.weight(1f), enabled = "A" in supportedTypes) {

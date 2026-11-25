@@ -859,6 +859,7 @@ data class LabProbeDdnsSnapshot(
 
 data class LabProbeDdnsRecord(
     val id: String = "",
+    val wanId: String = "",
     val provider: String = "",
     val hostname: String = "",
     val recordTypes: List<String> = listOf("A", "AAAA"),
@@ -881,6 +882,7 @@ data class LabProbeDdnsRecord(
     val credentialsConfigured: Boolean = false,
 ) {
     fun toJson(credentials: Map<String, String> = emptyMap()): JSONObject = JSONObject().apply {
+        put("wanId", wanId.trim())
         put("provider", provider.trim())
         put("hostname", hostname.trim())
         put("recordTypes", JSONArray(normalizeLabProbeRecordTypes(recordTypes)))
@@ -905,6 +907,33 @@ data class LabProbeDdnsRecord(
 internal fun normalizeLabProbeRecordTypes(values: List<String>): List<String> {
     val normalized = values.map { it.trim().uppercase(Locale.ROOT) }.filter { it in setOf("A", "AAAA", "CNAME", "TXT") }.distinct()
     return if ("CNAME" in normalized) listOf("CNAME") else normalized.ifEmpty { listOf("A", "AAAA") }
+}
+
+internal data class LabProbeDdnsWanEditorState(
+    val selectedWanId: String,
+    val options: List<String>,
+    val showSelector: Boolean,
+)
+
+internal fun labProbeDdnsWanEditorState(record: LabProbeDdnsRecord, inventory: WanInventory?): LabProbeDdnsWanEditorState {
+    val configuredWans = inventory?.wans.orEmpty().filter { it.configured && it.wanId.isNotBlank() }
+    val currentWanId = record.wanId.trim()
+    val selectedWanId = when {
+        currentWanId.isNotBlank() -> currentWanId
+        configuredWans.size == 1 -> configuredWans.single().wanId
+        record.id.isNotBlank() -> ""
+        else -> configuredWans.firstOrNull { it.defaultEgress }?.wanId
+            ?: configuredWans.firstOrNull()?.wanId
+            ?: ""
+    }
+    val options = (configuredWans.map { it.wanId } + selectedWanId)
+        .filter { it.isNotBlank() }
+        .distinct()
+    return LabProbeDdnsWanEditorState(
+        selectedWanId = selectedWanId,
+        options = options,
+        showSelector = configuredWans.size > 1,
+    )
 }
 
 private fun normalizeLabProbeProviderRecordTypes(values: List<String>): List<String> {
@@ -953,6 +982,7 @@ internal fun parseLabProbeDdns(root: JSONObject): LabProbeDdnsSnapshot {
                 }?.let(::normalizeLabProbeRecordTypes) ?: listOf("A", "AAAA")
                 LabProbeDdnsRecord(
                     id = item.ddnsText("id", "recordId"),
+                    wanId = item.ddnsText("wanId"),
                     provider = item.ddnsText("provider"),
                     hostname = item.ddnsText("hostname", "domain"),
                     recordTypes = recordTypes,

@@ -9,4 +9,11 @@ class LabProbeDdnsUiContractTest {
         assertEquals(listOf("编辑", "停用", "删除"), labProbeDdnsMenuLabels(true))
         assertEquals(listOf("编辑", "启用", "删除"), labProbeDdnsMenuLabels(false))
     }
+
+    @Test
+    fun wanLabelIsStableForCardsAndDetails() {
+        assertEquals("WAN1", labProbeDdnsWanLabel(" wan1 "))
+        assertEquals("BROADBAND2", labProbeDdnsWanLabel("broadband2"))
+        assertEquals("", labProbeDdnsWanLabel(" "))
+    }
 }

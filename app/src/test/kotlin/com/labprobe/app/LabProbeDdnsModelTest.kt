@@ -28,6 +28,88 @@ class LabProbeDdnsModelTest {
     }
 
     @Test
+    fun recordJsonAlwaysSerializesWanIdIncludingLegacyEmptyValue() {
+        assertEquals("wan1", LabProbeDdnsRecord(wanId = " wan1 ").toJson().getString("wanId"))
+        assertEquals("", LabProbeDdnsRecord().toJson().getString("wanId"))
+    }
+
+    @Test
+    fun hubSnapshotParsesWanIdAndDefaultsMissingLegacyValueToEmpty() {
+        val root = JSONObject().put("records", JSONArray()
+            .put(JSONObject().put("id", "new").put("wanId", "wan1"))
+            .put(JSONObject().put("id", "old")))
+
+        val records = parseLabProbeDdns(root).records
+        assertEquals("wan1", records.single { it.id == "new" }.wanId)
+        assertEquals("", records.single { it.id == "old" }.wanId)
+    }
+
+    @Test
+    fun singleConfiguredWan1IsSelectedAutomaticallyWithoutSelector() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", configured = false),
+                WanInfo(wanId = "wan1", configured = true),
+            ),
+            configuredCount = 1,
+        )
+
+        val state = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory)
+        assertEquals("wan1", state.selectedWanId)
+        assertEquals(listOf("wan1"), state.options)
+        assertFalse(state.showSelector)
+    }
+
+    @Test
+    fun newRecordUsesDefaultEgressAndExistingRecordKeepsItsWan() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", configured = true),
+                WanInfo(wanId = "broadband2", configured = true, defaultEgress = true),
+            ),
+            configuredCount = 2,
+        )
+
+        val newState = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory)
+        assertEquals("broadband2", newState.selectedWanId)
+        assertEquals(listOf("wan", "broadband2"), newState.options)
+        assertTrue(newState.showSelector)
+
+        val existingState = labProbeDdnsWanEditorState(LabProbeDdnsRecord(id = "existing", wanId = "legacy0"), inventory)
+        assertEquals("legacy0", existingState.selectedWanId)
+        assertEquals(listOf("wan", "broadband2", "legacy0"), existingState.options)
+        assertTrue(existingState.showSelector)
+    }
+
+    @Test
+    fun knownSingleWanFillsLegacyEmptyRecordButUnknownHubDoesNotInventWan() {
+        val singleWan = WanInventory(
+            wans = listOf(WanInfo(wanId = "wan1", configured = true)),
+            configuredCount = 1,
+        )
+        val legacyRecord = LabProbeDdnsRecord(id = "legacy")
+        assertEquals("wan1", labProbeDdnsWanEditorState(legacyRecord, singleWan).selectedWanId)
+        assertEquals("", labProbeDdnsWanEditorState(legacyRecord, null).selectedWanId)
+        assertTrue(labProbeDdnsWanEditorState(legacyRecord, null).options.isEmpty())
+    }
+
+    @Test
+    fun existingEmptyWanStaysEmptyWhenMultipleConfiguredWansAreAvailable() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", configured = true, defaultEgress = true),
+                WanInfo(wanId = "wan1", configured = true),
+            ),
+            configuredCount = 2,
+        )
+
+        val state = labProbeDdnsWanEditorState(LabProbeDdnsRecord(id = "legacy"), inventory)
+        assertEquals("", state.selectedWanId)
+        assertEquals(listOf("wan", "wan1"), state.options)
+        assertTrue(state.showSelector)
+    }
+
+    @Test
     fun configuredRecordSavedWithoutCredentialInputDoesNotClearTheSecret() {
         val json = LabProbeDdnsRecord(
             id = "existing",
