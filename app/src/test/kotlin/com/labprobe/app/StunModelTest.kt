@@ -83,7 +83,8 @@ class StunModelTest {
         assertEquals("", json.getString("name"))
         assertTrue(json.getBoolean("enabled"))
         assertEquals("manual", json.getString("targetType"))
-        assertEquals(7, json.length())
+        assertEquals("wan", json.getString("wanId"))
+        assertEquals(8, json.length())
     }
 
     @Test

@@ -226,7 +226,13 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · DDNS 与映射排版收尾" to listOf(
+            "v$NAME build$CODE · 多 WAN 与官方账号测试版" to listOf(
+                "统一 WAN 发现、逐线路网络详情、固件测速、NAT、原生 DDNS、端口映射及 UPnP 展示",
+                "STUN 与 TCP 会话增加线路能力校验，LabProbe DDNS 支持逐 WAN 地址检测",
+                "设置页展开折叠、HTTPS 勾选、锐捷官方账号授权与退出流程",
+                "NAT 诊断、SSH、映射与首页多 WAN 展示收尾；双 WAN 实际运行仍需实机验证"
+            ),
+            "v0.14.11 build355 · DDNS 与映射排版收尾" to listOf(
                 "原生 DDNS 在固件不返回当前 IP 时显示真实最后更新时间，刷新失败保留缓存并不再误报连接异常",
                 "手机测速单方向封顶调整为 10 秒",
                 "STUN 同步显示骨架卡片不再白屏，路由器直连卡片补充简洁页脚",
