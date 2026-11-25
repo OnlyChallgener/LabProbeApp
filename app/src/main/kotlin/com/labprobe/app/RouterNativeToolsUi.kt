@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontFamily
@@ -39,6 +40,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val NativeBlue = LabV2.Primary
 private val NativeCyan = LabV2.Cyan
@@ -157,7 +161,7 @@ private fun natLogZh(raw: String): String {
 }
 
 @Composable
-private fun NativeSelector(
+internal fun NativeSelector(
     label: String,
     value: String,
     options: List<Pair<String, String>>,
@@ -167,81 +171,105 @@ private fun NativeSelector(
     modifier: Modifier = Modifier,
     leadingIcon: androidx.compose.ui.graphics.vector.ImageVector? = null
 ) {
-    val shape = LabPopupShapes.Field
-    Box(modifier) {
-        OutlinedButton(
-            onClick = { onExpandedChange(true) },
-            modifier = Modifier.fillMaxWidth().height(52.dp).nativeCardShadow(shape, 1.dp),
-            shape = shape,
-            colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
-            border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f)),
-            contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp)
-        ) {
-            if (leadingIcon != null) {
-                Icon(leadingIcon, null, Modifier.size(16.dp), tint = NativeBlue)
-                Spacer(Modifier.width(8.dp))
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                Text(label, fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
-                Spacer(Modifier.height(3.dp))
-                Text(value, style = LabTypography.ValueStrong.copy(color = NativeInk), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
-        }
-        LabDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { onExpandedChange(false) },
-            modifier = Modifier.widthIn(max = 280.dp),
-            shape = LabPopupShapes.Menu,
-            containerColor = Color.White,
-            tonalElevation = 0.dp,
-            shadowElevation = 4.dp
-        ) {
-            options.forEach { (key, title) ->
-                LabDropdownMenuItem(
-                    text = { Text(title, color = NativeInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
-                    onClick = { onSelect(key); onExpandedChange(false) },
-                    modifier = Modifier.heightIn(min = 24.dp),
-                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp)
+    val shape = RoundedCornerShape(10.dp)
+    Column(modifier) {
+        Text(
+            label,
+            fontSize = LabTypography.Caption.fontSize,
+            lineHeight = LabTypography.Caption.lineHeight,
+            color = NativeMuted,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(4.dp))
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { onExpandedChange(true) },
+                modifier = Modifier.fillMaxWidth().height(46.dp).nativeCardShadow(shape, 1.dp),
+                shape = shape,
+                colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
+                border = BorderStroke(1.dp, NativeBorder),
+                contentPadding = PaddingValues(horizontal = 11.dp, vertical = 0.dp)
+            ) {
+                if (leadingIcon != null) {
+                    Icon(leadingIcon, null, Modifier.size(16.dp), tint = NativeBlue)
+                    Spacer(Modifier.width(7.dp))
+                }
+                Text(
+                    value,
+                    style = LabTypography.ValueStrong.copy(color = NativeInk),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
+                Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue, modifier = Modifier.size(18.dp))
+            }
+            LabDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { onExpandedChange(false) },
+                modifier = Modifier.widthIn(max = 280.dp),
+                shape = LabPopupShapes.Menu,
+                containerColor = Color.White,
+                tonalElevation = 0.dp,
+                shadowElevation = 4.dp
+            ) {
+                options.forEach { (key, title) ->
+                    LabDropdownMenuItem(
+                        text = { Text(title, color = NativeInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
+                        onClick = { onSelect(key); onExpandedChange(false) },
+                        modifier = Modifier.heightIn(min = 24.dp),
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 4.dp)
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun NativeCompactPortField(
+internal fun NativeCompactPortField(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier.fillMaxWidth()
 ) {
-    val shape = RoundedCornerShape(14.dp)
-    Surface(
-        modifier = modifier.height(52.dp).nativeCardShadow(shape, 4.dp),
-        shape = shape,
-        color = Color.White,
-        border = BorderStroke(1.dp, NativeBlue.copy(alpha = .30f))
-    ) {
-        Column(
-            Modifier.fillMaxSize().padding(horizontal = 14.dp),
-            verticalArrangement = Arrangement.Center
+    val shape = RoundedCornerShape(10.dp)
+    Column(modifier) {
+        Text(
+            "STUN 端口",
+            fontSize = LabTypography.Caption.fontSize,
+            lineHeight = LabTypography.Caption.lineHeight,
+            color = NativeMuted,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
+        Spacer(Modifier.height(4.dp))
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(46.dp).nativeCardShadow(shape, 1.dp),
+            shape = shape,
+            color = Color.White,
+            border = BorderStroke(1.dp, NativeBorder)
         ) {
-            Text("STUN 端口", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(3.dp))
-            BasicTextField(
-                value = value,
-                onValueChange = { onValueChange(it.filter(Char::isDigit).take(5)) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                textStyle = LabTypography.FieldValue.copy(textAlign = TextAlign.Start),
-                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
-                cursorBrush = SolidColor(NativeBlue)
-            )
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Router, null, tint = NativeBlue, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(7.dp))
+                BasicTextField(
+                    value = value,
+                    onValueChange = { onValueChange(it.filter(Char::isDigit).take(5)) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    textStyle = LabTypography.FieldValue.copy(textAlign = TextAlign.Start),
+                    keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    cursorBrush = SolidColor(NativeBlue)
+                )
+            }
         }
     }
 }
 
-private data class RouterNatResult(
+internal data class RouterNatResult(
     val timestamp: Long = 0L,
     val status: String = "idle",
     val mode: String = "classic",
@@ -582,82 +610,49 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     DetailShell("路由 NAT 诊断", "路由器原生 RFC3489 / RFC5780", onBack, compactHeader = true, unifiedTypography = true) {
         NativeCard {
-            NativeTitle(Icons.Rounded.Radar, "检测参数", NativeBlue, FontWeight.SemiBold)
-            val serverShape = RoundedCornerShape(14.dp)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(Modifier.weight(1.35f)) {
-                    OutlinedButton(
-                        onClick = { serverMenu = true },
-                        modifier = Modifier.fillMaxWidth().height(52.dp).nativeCardShadow(serverShape, 1.dp),
-                        shape = serverShape,
-                        colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, NativeBlue.copy(alpha = .32f)),
-                        contentPadding = PaddingValues(horizontal = 13.dp, vertical = 0.dp)
-                    ) {
-                        Icon(Icons.Rounded.Dns, null, Modifier.size(16.dp), tint = NativeBlue)
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                            Text("STUN 服务器", fontSize = LabTypography.Caption.fontSize, lineHeight = LabTypography.Caption.lineHeight, color = NativeMuted, fontWeight = FontWeight.Medium)
-                            Spacer(Modifier.height(3.dp))
-                            Text(server, style = LabTypography.ValueStrong.copy(color = NativeInk), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        Icon(Icons.Rounded.ArrowDropDown, null, tint = NativeBlue)
-                    }
-                    LabDropdownMenu(
+            NativeTitle(Icons.Rounded.Radar, "检测参数", NativeBlue, FontWeight.SemiBold, titleSize = 14.sp)
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NativeSelector(
+                        label = "STUN 服务器",
+                        value = server,
+                        options = servers.map { it to it },
                         expanded = serverMenu,
-                        onDismissRequest = { serverMenu = false },
-                        modifier = Modifier.widthIn(max = 320.dp),
-                        shape = LabPopupShapes.Menu,
-                        containerColor = Color.White,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 4.dp
-                    ) {
-                        servers.forEach { host ->
-                            LabDropdownMenuItem(
-                                text = { Text(host, color = NativeInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) },
-                                onClick = { server = host; serverMenu = false },
-                                modifier = Modifier.heightIn(min = 24.dp),
-                                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
+                        onExpandedChange = { serverMenu = it },
+                        onSelect = { server = it },
+                        modifier = Modifier.weight(1.35f),
+                        leadingIcon = Icons.Rounded.Dns,
+                    )
+                    NativeCompactPortField(
+                        value = portText,
+                        onValueChange = { portText = it },
+                        modifier = Modifier.weight(.85f),
+                    )
                 }
-                NativeCompactPortField(
-                    value = portText,
-                    onValueChange = { portText = it },
-                    modifier = Modifier.weight(.85f)
-                )
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NativeSelector(
-                    label = "STUN 类型",
-                    value = if (mode == "5780") "RFC 5780" else "RFC 3489",
-                    options = listOf("classic" to "RFC 3489", "5780" to "RFC 5780"),
-                    expanded = modeMenu,
-                    onExpandedChange = { modeMenu = it },
-                    onSelect = { mode = it },
-                    modifier = Modifier.weight(1.35f),
-                    leadingIcon = Icons.Rounded.Tune
-                )
-                NativeSelector(
-                    label = "WAN 类型",
-                    value = interfaceName.uppercase(),
-                    options = interfaceOptions,
-                    expanded = interfaceMenu,
-                    onExpandedChange = { interfaceMenu = it },
-                    onSelect = { interfaceName = it },
-                    modifier = Modifier.weight(.85f)
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NativeSelector(
+                        label = "STUN 类型",
+                        value = if (mode == "5780") "RFC 5780" else "RFC 3489",
+                        options = listOf("classic" to "RFC 3489", "5780" to "RFC 5780"),
+                        expanded = modeMenu,
+                        onExpandedChange = { modeMenu = it },
+                        onSelect = { mode = it },
+                        modifier = Modifier.weight(1.35f),
+                        leadingIcon = Icons.Rounded.Tune,
+                    )
+                    NativeSelector(
+                        label = "WAN 类型",
+                        value = interfaceName.uppercase(),
+                        options = interfaceOptions,
+                        expanded = interfaceMenu,
+                        onExpandedChange = { interfaceMenu = it },
+                        onSelect = { interfaceName = it },
+                        modifier = Modifier.weight(.85f),
+                        leadingIcon = Icons.Rounded.Public,
+                    )
+                }
+                val startShape = RoundedCornerShape(14.dp)
+                Surface(
                     onClick = {
                         val port = portText.toIntOrNull()
                         if (port == null || port !in 1..65535) {
@@ -676,133 +671,397 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         }
                     },
                     enabled = !running,
-                    modifier = Modifier.fillMaxWidth().height(44.dp).nativeCardShadow(RoundedCornerShape(14.dp), 2.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = NativeBlue,
-                        contentColor = Color.White,
-                        disabledContainerColor = NativeBlue.copy(alpha = .62f),
-                        disabledContentColor = Color.White
-                    )
+                    shape = startShape,
+                    color = Color.Transparent,
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                        .nativeCardShadow(startShape, 2.dp)
+                        .background(Brush.horizontalGradient(listOf(NativeBlue, NativeCyan)), startShape),
                 ) {
-                    if (running) CircularProgressIndicator(
-                        Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White, trackColor = Color.Transparent
-                    ) else Icon(Icons.Rounded.Radar, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(7.dp))
-                    Text(if (running) "检测中" else "开始检测", style = LabTypography.Button.copy(fontWeight = FontWeight.SemiBold))
+                    Row(
+                        Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (running) {
+                            CircularProgressIndicator(
+                                Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White,
+                                trackColor = Color.Transparent
+                            )
+                        } else {
+                            Icon(Icons.Rounded.Radar, null, Modifier.size(18.dp), tint = Color.White)
+                        }
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            if (running) "检测中" else "开始检测",
+                            style = LabTypography.Button.copy(fontWeight = FontWeight.SemiBold),
+                            color = Color.White,
+                        )
+                    }
                 }
             }
         }
 
         if (error.isNotBlank()) NativeMessage(error, NativeRed)
 
-        NativeCard {
-            NativeTitle(Icons.Rounded.CheckCircle, "分析结果", NativeCyan, FontWeight.SemiBold)
-            NativeAnalysisValueRow("检测状态", when {
-                loading && result.status == "idle" -> "读取中"
-                running -> result.stageText.ifBlank { "检测中" }
-                result.completed -> "检测完成"
-                else -> natStatusZh(result.status)
-            })
-            NativeAnalysisValueRow(
-                "检测线路",
-                (result.detectedInterface.ifBlank { result.requestedInterface }).uppercase(),
-            )
-            if (result.sourceIp.isNotBlank()) NativeAnalysisValueRow("源地址", result.sourceIp)
-            if (result.mode == "5780") {
-                NativeAnalysisValueRow("映射行为", natMappingBehaviorZh(result.mappingBehavior))
-                NativeAnalysisValueRow("过滤行为", natFilteringBehaviorZh(result.filteringBehavior))
-                if (result.otherAddress.isNotBlank()) NativeAnalysisValueRow("其他地址", result.otherAddress)
-            } else {
-                NativeAnalysisValueRow("NAT类型", natTypeZh(result.natType))
-            }
-            NativeAnalysisValueRow("外网地址", result.externalAddress.ifBlank {
-                if (result.externalIp.isBlank()) "--" else result.externalIp +
-                    if (result.externalPort > 0) ":${result.externalPort}" else ""
-            })
-            NativeAnalysisValueRow("检测模式", if (result.mode == "5780") "RFC 5780" else "RFC 3489")
-            if (running) {
-                NativeAnalysisValueRow("已耗时", "${result.elapsedSeconds} 秒")
-            } else if (result.elapsedSeconds > 0L) {
-                NativeAnalysisValueRow("检测耗时", "${result.elapsedSeconds} 秒")
-            }
-            if (result.lastRouterResponseAt > 0L) {
-                if (running) {
-                    val age = (System.currentTimeMillis() / 1000L - result.lastRouterResponseAt).coerceAtLeast(0L)
-                    NativeAnalysisValueRow("路由器响应", if (age < 3L) "刚刚" else "${age} 秒前")
-                } else {
-                    NativeAnalysisValueRow("最终响应", "已收到")
-                }
-            }
-        }
+        NatDiagnosticColumns(task = task, result = result, loading = loading)
 
         if (result.log.isNotBlank()) {
             NativeCard {
-                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan, FontWeight.SemiBold, titleSize = 13.sp)
-                SelectionContainer {
-                    Text(
-                        natLogZh(result.log),
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.5.sp,
-                        lineHeight = 16.sp,
-                        fontWeight = FontWeight.Normal,
-                        color = NativeInk
-                    )
+                NativeTitle(Icons.Rounded.Terminal, "检测日志", NativeCyan, FontWeight.SemiBold, titleSize = 13.5.sp)
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFFEAF3FB),
+                    border = BorderStroke(1.dp, Color(0xFFD8E8F7)),
+                ) {
+                    SelectionContainer {
+                        Text(
+                            natLogZh(result.log),
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                            fontWeight = FontWeight.Normal,
+                            color = NativeInk,
+                        )
+                    }
                 }
             }
         }
 
         if (history.isNotEmpty()) {
             NativeCard {
-                NativeTitle(Icons.Rounded.History, "最近检测", NativeAmber, FontWeight.SemiBold)
+                NativeTitle(Icons.Rounded.History, "最近检测", NativeAmber, FontWeight.SemiBold, titleSize = 14.sp)
                 history.forEachIndexed { index, item ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 4.dp, bottom = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                if (item.mode == "5780") {
-                                    listOf(
-                                        natMappingBehaviorZh(item.mappingBehavior),
-                                        natFilteringBehaviorZh(item.filteringBehavior)
-                                    ).filter { it != "--" }.joinToString(" · ").ifBlank { "RFC5780 行为检测" }
-                                } else natTypeZh(item.natType),
-                                fontSize = LabTypography.Body.fontSize,
-                                lineHeight = LabTypography.Body.lineHeight,
-                                fontWeight = FontWeight.Bold,
-                                color = NativeInk,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Text(
-                                listOf(
-                                    item.externalAddress,
-                                    (item.detectedInterface.ifBlank { item.requestedInterface }).uppercase(),
-                                    if (item.mode == "5780") "RFC5780" else "RFC3489",
-                                    item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
-                                ).filter(String::isNotBlank).joinToString(" · "),
-                                style = LabTypography.Caption.copy(color = NativeMuted, fontWeight = FontWeight.SemiBold)
-                            )
-                        }
-                        IconButton(
-                            onClick = {
-                                history = deleteNatHistory(context, item)
-                            },
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Icon(LabActionIcons.Delete, "删除检测记录", Modifier.size(18.dp), tint = NativeMuted)
-                        }
-                    }
-                    if (index != history.lastIndex) HorizontalDivider(color = NativeBorder)
+                    NatHistoryRow(item = item, onDelete = { history = deleteNatHistory(context, item) })
+                    if (index != history.lastIndex) HorizontalDivider(color = NativeBorder.copy(alpha = .8f))
                 }
             }
         }
     }
-
 }
 
+internal enum class NatStageState { DONE, CURRENT, PENDING, FAILED }
+
+internal data class NatTimelineItem(
+    val title: String,
+    val detail: String,
+    val timestamp: Long,
+    val state: NatStageState,
+)
+
+internal fun natTimelineItems(task: RouterTaskSnapshot, result: RouterNatResult): List<NatTimelineItem> {
+    val started = task.state != "idle" && task.startedAt > 0L
+    val firstTime = task.startedAt.takeIf { it > 0L } ?: 0L
+    val natTime = natLogTimestamp(task.log + result.log.lines(), "[NAT 检测]", "[NAT Detection]")
+    val finishedTime = result.timestamp.takeIf { it > 0L } ?: task.updatedAt.takeIf { task.succeeded && it > 0L } ?: 0L
+    val firstDone = started || task.active || task.succeeded || (task.failed && task.startedAt > 0L)
+    val secondDone = task.succeeded || task.stage in setOf("router_running", "router_response", "result", "finished") ||
+        task.failed && task.startedAt > 0L
+    return listOf(
+        NatTimelineItem(
+            title = "STUN 请求",
+            detail = "向 STUN 服务器发送请求",
+            timestamp = firstTime,
+            state = when {
+                task.state == "queued" -> NatStageState.CURRENT
+                task.failed && !firstDone -> NatStageState.FAILED
+                firstDone -> NatStageState.DONE
+                task.active -> NatStageState.CURRENT
+                else -> NatStageState.PENDING
+            },
+        ),
+        NatTimelineItem(
+            title = "NAT 检测",
+            detail = "执行 NAT 类型检测",
+            timestamp = natTime,
+            state = when {
+                task.state == "queued" -> NatStageState.PENDING
+                task.succeeded -> NatStageState.DONE
+                task.failed && secondDone -> NatStageState.FAILED
+                secondDone -> NatStageState.DONE
+                firstDone && task.active -> NatStageState.CURRENT
+                else -> NatStageState.PENDING
+            },
+        ),
+        NatTimelineItem(
+            title = "结果完成",
+            detail = if (task.failed) "检测未完成，请查看日志" else "检测完成，已获得最终结果",
+            timestamp = finishedTime,
+            state = when {
+                task.succeeded -> NatStageState.DONE
+                task.failed -> NatStageState.FAILED
+                else -> NatStageState.PENDING
+            },
+        ),
+    )
+}
+
+private fun natLogTimestamp(lines: List<String>, vararg markers: String): Long {
+    val line = lines.firstOrNull { candidate -> markers.any { candidate.contains(it, ignoreCase = true) } } ?: return 0L
+    val value = line.take(19)
+    return runCatching { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).parse(value)?.time?.div(1000L) }.getOrNull() ?: 0L
+}
+
+@Composable
+internal fun NatDiagnosticColumns(
+    task: RouterTaskSnapshot,
+    result: RouterNatResult,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        NatProcessCard(task = task, result = result, loading = loading, modifier = Modifier.weight(.42f))
+        NatResultCard(result = result, task = task, loading = loading, modifier = Modifier.weight(.58f))
+    }
+}
+
+@Composable
+internal fun NatProcessCard(
+    task: RouterTaskSnapshot,
+    result: RouterNatResult,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFFEDF4FB),
+        border = BorderStroke(1.dp, NativeBorder),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Radar, null, tint = NativeBlue, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("诊断过程", fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = NativeInk)
+            }
+            if (loading && task.state == "idle") {
+                Text("等待任务状态", fontSize = 11.sp, lineHeight = 15.sp, color = NativeMuted)
+            } else {
+                natTimelineItems(task, result).forEachIndexed { index, item ->
+                    Row(Modifier.fillMaxWidth()) {
+                        Column(Modifier.width(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            val color = when (item.state) {
+                                NatStageState.DONE -> NativeBlue
+                                NatStageState.CURRENT -> NativeCyan
+                                NatStageState.FAILED -> NativeRed
+                                NatStageState.PENDING -> Color(0xFFB9C9D9)
+                            }
+                            Box(
+                                Modifier.size(14.dp).clip(CircleShape).background(color),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                when (item.state) {
+                                    NatStageState.DONE -> Icon(Icons.Rounded.Check, null, tint = Color.White, modifier = Modifier.size(10.dp))
+                                    NatStageState.CURRENT -> Box(Modifier.size(5.dp).clip(CircleShape).background(Color.White))
+                                    NatStageState.FAILED -> Icon(Icons.Rounded.Close, null, tint = Color.White, modifier = Modifier.size(10.dp))
+                                    NatStageState.PENDING -> Unit
+                                }
+                            }
+                            if (index < 2) {
+                                Spacer(Modifier.height(3.dp))
+                                Box(Modifier.width(2.dp).height(30.dp).background(Color(0xFFCFDFEE)))
+                            }
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                                Text(
+                                    item.title,
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = NativeInk,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (item.timestamp > 0L) {
+                                    Text(
+                                        SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(item.timestamp * 1000L)),
+                                        fontSize = 9.5.sp,
+                                        lineHeight = 15.sp,
+                                        color = NativeMuted,
+                                    )
+                                }
+                            }
+                            Text(
+                                item.detail,
+                                fontSize = 10.5.sp,
+                                lineHeight = 14.sp,
+                                color = NativeMuted,
+                                softWrap = true,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun NatResultCard(
+    result: RouterNatResult,
+    task: RouterTaskSnapshot,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val statusText = when {
+        loading && result.status == "idle" -> "读取中"
+        result.completed -> "检测完成"
+        task.failed -> "检测失败"
+        task.active -> "检测中"
+        else -> natStatusZh(result.status)
+    }
+    val statusColor = when {
+        result.completed -> NativeGreen
+        task.failed -> NativeRed
+        task.active -> NativeBlue
+        else -> NativeAmber
+    }
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = Color.White,
+        border = BorderStroke(1.dp, NativeBorder),
+        shadowElevation = 2.dp,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.CheckCircle, null, tint = NativeBlue, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("分析结果", fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.SemiBold, color = NativeInk, modifier = Modifier.weight(1f))
+                Surface(shape = RoundedCornerShape(99.dp), color = statusColor.copy(alpha = .10f)) {
+                    Row(
+                        Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.size(4.dp).clip(CircleShape).background(statusColor))
+                        Spacer(Modifier.width(3.dp))
+                        Text(statusText, fontSize = 9.5.sp, lineHeight = 12.sp, fontWeight = FontWeight.SemiBold, color = statusColor, maxLines = 1)
+                    }
+                }
+            }
+            if (result.mode == "5780") {
+                NatResultTile("映射行为", natMappingBehaviorZh(result.mappingBehavior), Icons.Rounded.SwapHoriz, Modifier.fillMaxWidth())
+                NatResultTile("过滤行为", natFilteringBehaviorZh(result.filteringBehavior), Icons.Rounded.FilterAlt, Modifier.fillMaxWidth())
+                if (result.otherAddress.isNotBlank()) {
+                    NatResultTile("其他地址", result.otherAddress, Icons.Rounded.Public, Modifier.fillMaxWidth())
+                }
+            } else {
+                NatResultTile("NAT 类型", natTypeZh(result.natType), Icons.Rounded.Layers, Modifier.fillMaxWidth())
+            }
+            NatResultTile(
+                "外网地址",
+                result.externalAddress.ifBlank {
+                    if (result.externalIp.isBlank()) "--" else result.externalIp +
+                        if (result.externalPort > 0) ":${result.externalPort}" else ""
+                },
+                Icons.Rounded.Public,
+                Modifier.fillMaxWidth(),
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                NatResultTile("检测模式", if (result.mode == "5780") "RFC 5780" else "RFC 3489", Icons.Rounded.Description, Modifier.weight(1f))
+                NatResultTile("检测耗时", "${result.elapsedSeconds} 秒", Icons.Rounded.Schedule, Modifier.weight(1f))
+            }
+            HorizontalDivider(color = NativeBorder.copy(alpha = .8f))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.SwapHoriz, null, tint = NativeBlue, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("最终响应", fontSize = 10.5.sp, color = NativeMuted, modifier = Modifier.weight(1f))
+                Text(
+                    if (result.lastRouterResponseAt > 0L) "已收到" else "--",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = NativeInk,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NatResultTile(
+    label: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = LabV2.FieldSoft,
+        border = BorderStroke(1.dp, NativeBorder.copy(alpha = .75f)),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, null, tint = NativeBlue, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(label, fontSize = 10.sp, lineHeight = 13.sp, color = NativeMuted, maxLines = 1)
+            }
+            Text(
+                value,
+                fontSize = 11.5.sp,
+                lineHeight = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = NativeInk,
+                softWrap = true,
+                maxLines = 3,
+                overflow = TextOverflow.Clip,
+            )
+        }
+    }
+}
+
+@Composable
+internal fun NatHistoryRow(item: RouterNatResult, onDelete: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                Text(
+                    if (item.mode == "5780") {
+                        listOf(natMappingBehaviorZh(item.mappingBehavior), natFilteringBehaviorZh(item.filteringBehavior))
+                            .filter { it != "--" }.joinToString(" · ").ifBlank { "RFC5780 行为检测" }
+                    } else natTypeZh(item.natType),
+                    fontSize = 12.5.sp,
+                    lineHeight = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = NativeInk,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    natHistoryDate(item.timestamp),
+                    fontSize = 10.sp,
+                    lineHeight = 17.sp,
+                    color = NativeMuted,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                listOf(
+                    item.externalAddress,
+                    if (item.mode == "5780") "RFC5780" else "RFC3489",
+                    (item.detectedInterface.ifBlank { item.requestedInterface }).uppercase(),
+                    item.stunPort.takeIf { it > 0 }?.let { "$it 端口" }.orEmpty()
+                ).filter(String::isNotBlank).joinToString(" · "),
+                fontSize = 10.5.sp,
+                lineHeight = 14.sp,
+                color = NativeMuted,
+                softWrap = true,
+                maxLines = 2,
+                overflow = TextOverflow.Clip,
+            )
+        }
+        IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+            Icon(LabActionIcons.Delete, "删除检测记录", Modifier.size(17.dp), tint = NativeMuted)
+        }
+    }
+}
+
+private fun natHistoryDate(timestamp: Long): String =
+    if (timestamp <= 0L) "--" else SimpleDateFormat("MM-dd HH:mm:ss", Locale.US).format(Date(timestamp * 1000L))
 
 private const val ROUTER_BETA_SNAPSHOT_PREF = "router_beta_snapshot_v1"
 

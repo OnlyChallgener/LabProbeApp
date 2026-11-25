@@ -117,3 +117,10 @@
 - LabRelay proxy cards use a thin divider and one compact footer row with cumulative download/upload chips at left and history, quick-access and copy icons at right. Traffic values keep their units on one line and must not be labeled as realtime speed.
 - Router-direct cards place the endpoint/route block beside the same action icons, with no traffic chips, divider or empty footer. Card height follows content.
 - Action icons use uniform 32dp light rounded backgrounds. Preserve all existing callbacks, conditional quick-access behavior, real cumulative counters and long-address wrapping at 360dp and 393dp.
+
+## November 25 — NAT diagnostic density refinement
+
+- NAT parameters use a 2×2 grid with the left column slightly wider. Labels sit above the fields; fields contain only the blue icon, value and required arrow. The start action remains full-width with the existing blue gradient.
+- Diagnostic process and analysis results share a 42:58 row. The process column uses a shallow blue-gray timeline with real task/log timestamps only; the result column uses compact wrapped value tiles and a real status pill.
+- Detection logs use a shallow blue-gray monospace surface with content-sized height up to the existing 260dp limit and internal scrolling.
+- History remains five real records with result/date on the first line and external address, protocol, actual WAN and STUN port on the second. Delete stays at the far right; rows use thin separators rather than nested cards.
