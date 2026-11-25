@@ -447,7 +447,7 @@ internal fun stunRuleTitle(rule: StunRule): String = rule.name.trim().let {
     }
 }
 internal fun stunDraftValidationError(draft: StunDraft): String? {
-    if (!Regex("wan[0-9]*").matches(normalizedStunWan(draft.wanId))) return "线路 ID 格式无效"
+    if (!Regex("[a-z0-9_-]{1,64}").matches(normalizedStunWan(draft.wanId))) return "线路 ID 格式无效"
     if (draft.targetType !in setOf("router_self", "device", "manual")) return "请选择目标类型"
     val ipv4 = draft.targetIpv4.trim()
     val validIpv4 = ipv4.split('.').let { parts -> parts.size == 4 && parts.all { part -> part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && (part.toIntOrNull() ?: -1) in 0..255 } }

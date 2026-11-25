@@ -988,7 +988,8 @@ internal fun wireGuardProvisionTargetMatches(root: JSONObject, profile: WireGuar
     return when (profile.endpointSource) {
         WireGuardEndpointSource.STUN -> actualEndpoint.optString("stunRuleId") == desiredEndpoint.optString("stunRuleId")
         WireGuardEndpointSource.DDNS -> actualEndpoint.optString("hostname").trimEnd('.').lowercase() ==
-            desiredEndpoint.optString("hostname").trimEnd('.').lowercase()
+            desiredEndpoint.optString("hostname").trimEnd('.').lowercase() &&
+            actualEndpoint.optString("ddnsRecordId") == desiredEndpoint.optString("ddnsRecordId")
         WireGuardEndpointSource.MANUAL -> false
     }
 }
@@ -1113,7 +1114,10 @@ internal fun buildWireGuardServerPayload(
         put("endpointRevision", previousEndpointRevision)
         put("resolvedEndpoint", profile.endpoint.ifBlank { previousResolvedEndpoint })
         when (profile.endpointSource) {
-            WireGuardEndpointSource.DDNS -> put("hostname", profile.endpointHost.trim().lowercase())
+            WireGuardEndpointSource.DDNS -> {
+                put("hostname", profile.endpointHost.trim().lowercase())
+                if (profile.endpointBindingId.isNotBlank()) put("ddnsRecordId", profile.endpointBindingId.trim())
+            }
             WireGuardEndpointSource.STUN -> put("stunRuleId", profile.endpointBindingId.trim())
             WireGuardEndpointSource.MANUAL -> Unit
         }
@@ -1542,6 +1546,24 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
 
     private fun getServer(): JSONObject = JSONObject(requestText("/api/wireguard/server"))
 
+    // Reuse the shared DDNS repository; resolve the exact managed record only
+    // when the user submits an automatic configuration. A legacy external
+    // hostname remains unbound; Hub decides whether single-WAN mode permits it.
+    private suspend fun resolveDdnsProfileBinding(profile: WireGuardProfile): WireGuardProfile {
+        if (profile.endpointSource != WireGuardEndpointSource.DDNS) return profile
+        requireOriginalConnection()
+        val repository = RouterRepositoryRegistry.get(prefs)
+        repository.refreshLabProbeDdns(false)
+        requireOriginalConnection()
+        val records = repository.labProbeDdns.value.value?.records.orEmpty()
+        val matches = records.filter {
+            it.enabled && it.hostname.trimEnd('.').equals(profile.endpointHost.trim().trimEnd('.'), true)
+        }
+        val record = matches.firstOrNull { it.id == profile.endpointBindingId } ?: matches.singleOrNull()
+        require(record != null || matches.isEmpty()) { "存在多条同名 DDNS 记录，请确认线路绑定" }
+        return profile.copy(endpointBindingId = record?.id.orEmpty())
+    }
+
     private fun getServerForVerification(): JSONObject {
         requireOriginalConnection()
         val response = hubApi.requestText("/api/wireguard/server", requestClient = verificationClient)
@@ -1724,8 +1746,9 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
         clientPublicKey: String,
     ): WireGuardRemoteMutationResult<WireGuardProfileTransitionResult> = withContext(Dispatchers.IO) {
         serverMutationMutex.withLock {
+            val boundProfile = resolveDdnsProfileBinding(newProfile)
             val result = submitRemovalPlan { root ->
-                buildWireGuardProfileTransitionPlan(root, oldProfile, newProfile, clientPublicKey)
+                buildWireGuardProfileTransitionPlan(root, oldProfile, boundProfile, clientPublicKey)
             }
             val applied = when (result) {
                 is WireGuardRemoteMutationResult.Applied -> result.value
@@ -1773,7 +1796,7 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
             }
             val publicKey = wireGuardServerPublicKey(latest).ifBlank { newProfile.serverPublicKey }
             WireGuardRemoteMutationResult.Applied(WireGuardProfileTransitionResult(
-                profile = newProfile.copy(serverPublicKey = publicKey),
+                profile = boundProfile.copy(serverPublicKey = publicKey),
                 removedEndpointProfileIds = plan.removedEndpointProfileIds,
                 removedPeerIds = plan.removedPeerIds,
                 appliedRevision = state.config.revision,
@@ -2101,7 +2124,7 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
                 requireManagedWireGuardServerForExistingProfile(before, profile)
                 val state = parseWireGuardServerState(before)
                 val server = state.config
-                val updatedProfile = applyWireGuardServerConfig(profile, server.listenPort, server.mtu, server.listenPort)
+                val updatedProfile = applyWireGuardServerConfig(resolveDdnsProfileBinding(profile), server.listenPort, server.mtu, server.listenPort)
                 // The previous PUT may have succeeded even when its reply or Agent poll was lost.
                 // An identical desired revision must be verified, not submitted again.
                 if (wireGuardProvisionTargetMatches(before, updatedProfile, clientPublicKey)) {
@@ -2183,6 +2206,20 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
                     require(profile.endpointUpdateError.isBlank()) { "STUN 地址未确认可用" }
                 }
                 if (row.optString("resolvedEndpoint") == profile.endpoint) return@withLock
+                val rowWan = row.optString("wanId").trim()
+                val updateWan = if (profile.endpointSource == WireGuardEndpointSource.STUN) {
+                    val snapshot = StunApi(prefs).list()
+                    require(snapshot.rulesLoaded) { "STUN 状态未完整同步，未覆盖端点" }
+                    val rule = boundWireGuardStunRule(profile, snapshot.rules)
+                    require(rule != null && rule.ready && rule.runtime.publicEndpoint == profile.endpoint) { "STUN 地址或线路尚未确认，未覆盖端点" }
+                    val actualWan = normalizedStunWan(rule.wanId)
+                    require(rowWan.isBlank() || normalizedStunWan(rowWan) == actualWan) { "STUN 线路已变化，请重新同步配置" }
+                    actualWan
+                } else {
+                    require(row.optString("hostname").trimEnd('.').equals(profile.endpointHost.trimEnd('.'), true)) { "DDNS 来源已变化，未覆盖端点" }
+                    require(profile.endpointBindingId.isBlank() || row.optString("ddnsRecordId") == profile.endpointBindingId) { "DDNS 记录已变化，未覆盖端点" }
+                    rowWan
+                }
                 val source = profile.endpointSource.wireValue
                 val owner = when (profile.endpointSource) {
                     WireGuardEndpointSource.DDNS -> "ddns:$id"
@@ -2192,6 +2229,7 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
                 val body = JSONObject()
                     .put("endpointSource", source)
                     .put("owner", owner)
+                    .put("wanId", updateWan)
                     .put("endpoint", profile.endpoint)
                     .put("expectedEndpointRevision", row.optLong("endpointRevision", 0L))
                 try {

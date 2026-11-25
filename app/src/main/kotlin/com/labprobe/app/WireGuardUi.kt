@@ -1570,7 +1570,7 @@ private fun WireGuardEditorDialog(
                                         selected = bindingId == rule.id,
                                         onClick = { bindingId = if (bindingId == rule.id) "" else rule.id },
                                         enabled = !busy,
-                                        label = { Text("${rule.name} · ${rule.targetIpv4}:${rule.targetPort}", style = LabTypography.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        label = { Text("${rule.name} · ${rule.targetIpv4}:${rule.targetPort}" + if (normalizedStunWan(rule.wanId) != "wan" || availableStunRules.map { normalizedStunWan(it.wanId) }.distinct().size > 1) " · ${normalizedStunWan(rule.wanId).uppercase()}" else "", style = LabTypography.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                         shape = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
                                         colors = FilterChipDefaults.filterChipColors(selectedContainerColor = WireGuardAmber.copy(alpha = .12f), selectedLabelColor = LabV2.Ink),
                                     )
