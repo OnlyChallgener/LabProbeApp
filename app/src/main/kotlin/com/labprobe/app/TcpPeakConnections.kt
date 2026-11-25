@@ -278,6 +278,16 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val controller = remember(prefs) { TcpPeakController(context, prefs) }
     val routerRepository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val wanResource by routerRepository.wans.collectAsState()
+    var relayAvailableWans by remember(prefs.hub, prefs.token, prefs.hubDns) { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(routerRepository) {
+        routerRepository.refreshWans()
+        relayAvailableWans = try {
+            withContext(Dispatchers.IO) {
+                val status = org.json.JSONObject(HubApi(prefs).requestText("/api/portmaps"))
+                tcpPeakAvailableWans(status)
+            }
+        } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { emptySet() }
+    }
     val pendingAiCommand = remember(prefs) {
         TcpPeakPendingAiCommand.fromJson(prefs.tcpPeakPendingAiCommandJson)
     }
@@ -303,10 +313,16 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
         selectedWanId = wanSelection.selectedWanId
     }
 
+    val explicitWan = wanSelection.selectedWanId
+    val selectedLine = configuredWans.firstOrNull { it.wanId.equals(explicitWan, true) }
+    val legacyDefault = configuredWans.size <= 1 && (explicitWan.isBlank() || explicitWan == "wan") && explicitWan !in relayAvailableWans
+    val relayLineUnavailable = side == TcpPeakSide.RELAY && !legacyDefault &&
+        (selectedLine == null || !selectedLine.online || !selectedLine.enabled || explicitWan !in relayAvailableWans)
+
     fun currentConfig(): TcpPeakConfig = TcpPeakConfig(
         side = side,
         host = host,
-        wanId = wanSelection.selectedWanId,
+        wanId = if (side == TcpPeakSide.RELAY && !legacyDefault) explicitWan else "",
         port = port.toIntOrNull() ?: 0,
         family = family,
         targetConnections = target.toIntOrNull() ?: 0,
@@ -389,6 +405,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     controller.start(cfg)
                 }
             },
+            enabled = active || !relayLineUnavailable,
             modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
             shape = LabV2.CardShape,
             colors = ButtonDefaults.buttonColors(
@@ -399,6 +416,9 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
             Icon(if (active) Icons.Rounded.Stop else Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text(if (active) "停止并释放连接" else "开始测试", fontWeight = FontWeight.Bold)
+        }
+        if (relayLineUnavailable && !active) {
+            Text("所选线路离线或 Relay 暂不支持", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
         }
         if (ui.notice.isNotBlank()) {
             Text(ui.notice, style = LabTypography.Supporting.copy(color = LabV2.Red), maxLines = 3, overflow = TextOverflow.Ellipsis)

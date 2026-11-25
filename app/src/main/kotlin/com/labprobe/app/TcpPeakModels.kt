@@ -428,3 +428,11 @@ private fun TcpPeakSnapshot.Companion.fromHistoryJson(row: JSONObject): TcpPeakS
 }
 
 const val TCP_PEAK_HISTORY_RETENTION_MS = 14L * 24L * 60L * 60L * 1_000L
+
+internal fun tcpPeakAvailableWans(root: JSONObject): Set<String> {
+    if (!root.optBoolean("agentOnline")) return emptySet()
+    val capabilities = root.optJSONArray("agentCapabilities") ?: return emptySet()
+    if ((0 until capabilities.length()).none { capabilities.optString(it) in setOf("relay.perWanTcpSession", "relay.multiWan") }) return emptySet()
+    val lines = root.optJSONArray("agentWanIds") ?: return emptySet()
+    return (0 until lines.length()).map { normalizeTcpPeakWanId(lines.optString(it)) }.filter(::isValidTcpPeakWanId).toSet()
+}
