@@ -109,3 +109,11 @@
 - Mapping rule cards show only connection count, cumulative upload and cumulative download. Packet counters remain available in details, not on the card. Endpoint labels and addresses share one row; the port remains inside the flowing address string instead of pinning to the card edge.
 - STUN cards remove the repeated dynamic-address badge, duplicated native-mechanism caption and the refresh/add divider. Keep the public endpoint, one concise target line, traffic for Relay rules, a short router-direct footer for native rules, history and quick actions. Initial sync shows skeleton cards instead of a blank page.
 - UPnP default route uses a compact two-button AUTO/WAN selector instead of a dropdown. Preserve the existing mutation callbacks and disabled-service behavior.
+
+## November 25 — STUN list card balance refinement
+
+- STUN cards reuse the mapping/favorite application recognition and icon presets. The header shows the application icon, rule title, service/protocol subtitle, a single-line status pill and the existing overflow menu.
+- The public endpoint is bold green text directly on the white card, followed by one forwarding route line. Do not repeat the forwarding-mode caption or add an endpoint background panel.
+- LabRelay proxy cards use a thin divider and one compact footer row with cumulative download/upload chips at left and history, quick-access and copy icons at right. Traffic values keep their units on one line and must not be labeled as realtime speed.
+- Router-direct cards place the endpoint/route block beside the same action icons, with no traffic chips, divider or empty footer. Card height follows content.
+- Action icons use uniform 32dp light rounded backgrounds. Preserve all existing callbacks, conditional quick-access behavior, real cumulative counters and long-address wrapping at 360dp and 393dp.

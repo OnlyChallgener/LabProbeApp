@@ -33,11 +33,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ArrowOutward
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PauseCircleOutline
 import androidx.compose.material.icons.rounded.PlayCircleOutline
@@ -78,6 +78,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -461,7 +463,7 @@ internal fun stunRuleStateLabel(rule: StunRule, agentOnline: Boolean, deleting: 
     !rule.enabled -> "已停止"
     !agentOnline && rule.runtime.publicEndpoint.isNotBlank() -> "Agent 离线 · 最近地址"
     !agentOnline -> "Agent 离线"
-    rule.ready -> "STUN 地址已获取"
+    rule.ready -> "地址已获取"
     rule.actualState == "router_mapping_error" -> "路由器映射未就绪"
     rule.actualState == "router_mapping" -> "正在同步路由器映射"
     rule.actualState == "firewall_error" -> "防火墙未就绪"
@@ -504,8 +506,8 @@ private fun stunDependencyBlocker(dependencies: StunWireGuardDependencySnapshot)
     stunDependencyBlocker((dependencies.localProfileNames + dependencies.remoteProfileNames).distinct())
 private fun formatStunBytes(bytes: Long): String = when {
     bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> String.format(Locale.US, "%.1f KB", bytes / 1024.0)
-    bytes < 1024 * 1024 * 1024 -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0)
+    bytes < 1024 * 1024 -> String.format(Locale.US, "%.1f KB", bytes / 1024.0).replace(".0 ", " ")
+    bytes < 1024 * 1024 * 1024 -> String.format(Locale.US, "%.1f MB", bytes / 1024.0 / 1024.0).replace(".0 ", " ")
     else -> String.format(Locale.US, "%.2f GB", bytes / 1024.0 / 1024.0 / 1024.0)
 }
 private fun formatStunTime(epoch: Long): String = if (epoch <= 0) "未知时间" else SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(epoch * 1000L))
@@ -1306,38 +1308,66 @@ fun StunPenetrationScreen(
         liveReady -> StunGreen
         else -> StunAmber
     }
-    LabCoreCard(compact = true, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp)) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(7.dp).background(stateColor, androidx.compose.foundation.shape.CircleShape))
-                Spacer(Modifier.width(7.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        stunRuleTitle(rule),
-                        style = LabTypography.CardTitle.copy(fontSize = 14.sp, lineHeight = 19.sp),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                      Text(
-                        when {
-                            wireGuardManaged -> "${rule.transportProtocol} · 自动管理"
-                            rule.serviceType.equals("WireGuard", true) -> rule.transportProtocol
-                            else -> "${rule.serviceType} · ${rule.transportProtocol}"
-                        },
-                        style = LabTypography.Supporting,
-                        modifier = Modifier.weight(1f),
-                        color = LabV2.InkMuted,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                      Surface(shape = RoundedCornerShape(99.dp), color = stateColor.copy(alpha = .10f)) {
-                        Text(stateText, color = stateColor, style = LabTypography.Caption, fontWeight = FontWeight.SemiBold, maxLines = 1, modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
-                      }
-                    }
-                }
+    val recognition = remember(rule.name, rule.serviceType, rule.transportProtocol, rule.targetPort) {
+        recognizeMappingService(
+            name = rule.name,
+            explicitType = rule.serviceType,
+            protocol = rule.transportProtocol,
+            internalPort = rule.targetPort.toString(),
+            clientIp = rule.targetIpv4,
+            devices = emptyList(),
+            favoriteHints = emptyList(),
+        )
+    }
+    val quickServiceType = recognition.serviceType.ifBlank {
+        rule.serviceType.ifBlank { rule.transportProtocol }
+    }
+    val iconId = recognition.iconId.ifBlank { favoriteIconForServiceType(quickServiceType) }
+    val subtitle = when {
+        wireGuardManaged -> "${rule.transportProtocol} · 自动管理"
+        rule.serviceType.equals("WireGuard", true) -> rule.transportProtocol
+        else -> "$quickServiceType · ${rule.transportProtocol}"
+    }
+    val endpoint = rule.runtime.publicEndpoint
+    val targetText = if (rule.targetType == "router_self") {
+        "路由器本机:${rule.targetPort}"
+    } else {
+        "${rule.targetIpv4}:${rule.targetPort}"
+    }
+    val routeText = if (rule.usesRouterNativeMapping) "路由器直连 → $targetText" else "LabRelay → $targetText"
+
+    LabCoreCard(compact = false, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            StunApplicationIcon(iconId)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    stunRuleTitle(rule),
+                    style = LabTypography.CardTitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    subtitle,
+                    style = LabTypography.Supporting,
+                    color = LabV2.InkMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                StunStatusPill(stateText, stateColor)
                 Box {
-                    IconButton(onClick = onMenu, enabled = !deleting && operationLabel == null, modifier = Modifier.size(32.dp)) { Icon(Icons.Rounded.MoreVert, "更多", tint = LabV2.InkMuted, modifier = Modifier.size(18.dp)) }
+                    IconButton(
+                        onClick = onMenu,
+                        enabled = !deleting && operationLabel == null,
+                        modifier = Modifier.size(30.dp),
+                    ) {
+                        Icon(Icons.Rounded.MoreVert, "更多", tint = LabV2.InkMuted, modifier = Modifier.size(18.dp))
+                    }
                     LabDropdownMenu(
                         expanded = menuOpen,
                         onDismissRequest = onMenu,
@@ -1346,7 +1376,9 @@ fun StunPenetrationScreen(
                         containerColor = Color.White,
                         tonalElevation = 0.dp,
                         shadowElevation = 8.dp,
-                        border = BorderStroke(1.dp, LabV2.Border), actionMenu = true) {
+                        border = BorderStroke(1.dp, LabV2.Border),
+                        actionMenu = true,
+                    ) {
                         LabDropdownMenuItem(
                             text = { Text("编辑", fontWeight = FontWeight.SemiBold) },
                             leadingIcon = { Icon(Icons.Rounded.Edit, null, tint = LabV2.InkMuted) },
@@ -1355,7 +1387,13 @@ fun StunPenetrationScreen(
                         )
                         LabDropdownMenuItem(
                             text = { Text(if (rule.enabled) "停止穿透" else "开始穿透", fontWeight = FontWeight.SemiBold) },
-                            leadingIcon = { Icon(if (rule.enabled) Icons.Rounded.PauseCircleOutline else Icons.Rounded.PlayCircleOutline, null, tint = LabV2.InkMuted) },
+                            leadingIcon = {
+                                Icon(
+                                    if (rule.enabled) Icons.Rounded.PauseCircleOutline else Icons.Rounded.PlayCircleOutline,
+                                    null,
+                                    tint = LabV2.InkMuted,
+                                )
+                            },
                             onClick = onToggle,
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                         )
@@ -1368,93 +1406,204 @@ fun StunPenetrationScreen(
                     }
                 }
             }
-            val endpoint = rule.runtime.publicEndpoint
-            Surface(
-                shape = LabCoreSurface.InnerShape,
-                color = if (liveReady) StunGreen.copy(alpha = .07f) else LabCoreSurface.Inner,
-                border = BorderStroke(1.dp, if (liveReady) StunGreen.copy(alpha = .16f) else LabCoreSurface.Border),
-                modifier = Modifier.fillMaxWidth(),
+        }
+
+        if (rule.usesRouterNativeMapping) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                if (endpoint.isBlank()) "公网地址获取中" else endpoint,
-                                fontWeight = FontWeight.Bold,
-                                color = if (endpoint.isBlank() || !liveReady) LabV2.InkMuted else StunGreen,
-                                fontSize = 14.sp,
-                                lineHeight = 19.sp,
-                                maxLines = 2,
-                                softWrap = true,
-                                overflow = TextOverflow.Clip,
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        val targetText = if (rule.targetType == "router_self") "路由器本机:${rule.targetPort}" else "${rule.targetIpv4}:${rule.targetPort}"
-                        Text(
-                            when {
-                                !agentOnline && endpoint.isNotBlank() -> "上次地址 · 当前未验证"
-                                rule.usesRouterNativeMapping -> "路由器直连 → $targetText"
-                                else -> "LabRelay → $targetText"
-                            },
-                            color = LabV2.InkMuted,
-                            fontSize = LabTypography.Caption.fontSize,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
+                StunEndpointBlock(endpoint, routeText, Modifier.weight(1f))
+                StunRuleActions(
+                    serviceType = quickServiceType,
+                    endpoint = endpoint,
+                    onOpenSsh = onOpenSsh,
+                    onOpenWireGuard = onOpenWireGuard,
+                    onHistory = onHistory,
+                    onCopy = onCopy,
+                )
             }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    if (rule.usesRouterNativeMapping) {
-                        Text("路由器直连", color = LabV2.InkMuted, style = LabTypography.Caption, maxLines = 1)
-                    } else {
-                        StunTraffic(Icons.Rounded.Download, "下载", rule.runtime.totalDownloadBytes, StunBlue)
-                        Spacer(Modifier.width(12.dp))
-                        StunTraffic(Icons.Rounded.Upload, "上传", rule.runtime.totalUploadBytes, StunGreen)
-                    }
-                }
-                Surface(
-                    modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onHistory),
-                    shape = RoundedCornerShape(12.dp),
-                    color = StunBlue.copy(alpha = .06f),
-                    border = BorderStroke(1.dp, StunBlue.copy(alpha = .14f)),
+        } else {
+            StunEndpointBlock(endpoint, routeText, Modifier.fillMaxWidth())
+            Box(Modifier.fillMaxWidth().height(1.dp).background(LabV2.Border))
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Row(
-                        Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Rounded.History, null, tint = StunBlue, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(3.dp))
-                        Text("地址记录", style = LabTypography.Caption.copy(color = StunBlue, fontWeight = FontWeight.SemiBold))
-                    }
+                    StunTraffic(Icons.Rounded.Download, rule.runtime.totalDownloadBytes, StunBlue, StunBlue.copy(alpha = .07f))
+                    StunTraffic(Icons.Rounded.Upload, rule.runtime.totalUploadBytes, StunGreen, StunGreen.copy(alpha = .07f))
                 }
-                if (serviceSupportsQuickAccess(rule.serviceType)) {
-                    Spacer(Modifier.width(2.dp))
-                    ServiceQuickAccessIconButton(
-                        serviceType = rule.serviceType,
-                        endpoint = endpoint,
-                        tint = StunBlue,
-                        onOpenSsh = onOpenSsh,
-                        onOpenWireGuard = onOpenWireGuard,
-                    )
-                }
-                if (endpoint.isNotBlank()) {
-                    IconButton(onClick = onCopy, modifier = Modifier.size(32.dp)) {
-                        Icon(Icons.Rounded.ContentCopy, "复制", tint = StunGreen, modifier = Modifier.size(18.dp))
-                    }
-                }
+                StunRuleActions(
+                    serviceType = quickServiceType,
+                    endpoint = endpoint,
+                    onOpenSsh = onOpenSsh,
+                    onOpenWireGuard = onOpenWireGuard,
+                    onHistory = onHistory,
+                    onCopy = onCopy,
+                )
             }
-            sequenceOf(rule.syncError, rule.nativeMappingMessage.takeIf { rule.enabled }.orEmpty(), rule.firewallMessage.takeIf { rule.enabled }.orEmpty(), rule.runtime.lastError.takeIf { rule.enabled }.orEmpty())
-                .firstOrNull { it.isNotBlank() && !liveReady }
-                ?.let { Text(uiMessageZh(it), color = StunRed, fontSize = LabTypography.Caption.fontSize, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+        }
+
+        sequenceOf(
+            rule.syncError,
+            rule.nativeMappingMessage.takeIf { rule.enabled }.orEmpty(),
+            rule.firewallMessage.takeIf { rule.enabled }.orEmpty(),
+            rule.runtime.lastError.takeIf { rule.enabled }.orEmpty(),
+        )
+            .firstOrNull { it.isNotBlank() && !liveReady }
+            ?.let {
+                Text(
+                    uiMessageZh(it),
+                    color = StunRed,
+                    fontSize = LabTypography.Caption.fontSize,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+    }
+}
+
+@Composable private fun StunApplicationIcon(iconId: String) {
+    Box(
+        Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(StunBlue.copy(alpha = .06f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!FavoritePresetIcon(iconId, 32)) {
+            Icon(Icons.Rounded.Public, null, tint = StunBlue, modifier = Modifier.size(22.dp))
         }
     }
 }
 
-@Composable private fun StunTraffic(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, bytes: Long, color: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = color, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(3.dp)); Text("$label ${formatStunBytes(bytes)}", color = LabV2.InkMuted, fontSize = LabTypography.Caption.fontSize) }
+@Composable private fun StunStatusPill(text: String, color: Color) {
+    Surface(
+        modifier = Modifier.widthIn(max = 108.dp),
+        shape = RoundedCornerShape(99.dp),
+        color = color.copy(alpha = .10f),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(5.dp).background(color, androidx.compose.foundation.shape.CircleShape))
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text,
+                color = color,
+                fontSize = 10.5.sp,
+                lineHeight = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable private fun StunEndpointBlock(endpoint: String, routeText: String, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            endpoint.ifBlank { "公网地址获取中" },
+            color = if (endpoint.isBlank()) LabV2.InkMuted else StunGreen,
+            fontSize = 17.sp,
+            lineHeight = 22.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 3,
+            softWrap = true,
+            overflow = TextOverflow.Clip,
+        )
+        Text(
+            routeText,
+            style = LabTypography.Supporting,
+            color = LabV2.InkMuted,
+            maxLines = 3,
+            softWrap = true,
+            overflow = TextOverflow.Clip,
+        )
+    }
+}
+
+@Composable private fun StunRuleActions(
+    serviceType: String,
+    endpoint: String,
+    onOpenSsh: (String, Int) -> Unit,
+    onOpenWireGuard: () -> Unit,
+    onHistory: () -> Unit,
+    onCopy: () -> Unit,
+) {
+    val context = LocalContext.current
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        StunActionButton(label = "地址记录", onClick = onHistory, background = StunBlue.copy(alpha = .06f)) {
+            StunHistoryIcon(StunBlue, Modifier.size(16.dp))
+        }
+        if (serviceSupportsQuickAccess(serviceType)) {
+            StunActionButton(
+                label = "快捷访问",
+                onClick = {
+                    val target = serviceQuickAccessTarget(serviceType, endpoint)
+                    if (target == null) toast(context, "暂未取得可用的快捷访问地址")
+                    else launchServiceQuickAccess(context, target, onOpenSsh, onOpenWireGuard)
+                },
+                background = StunBlue.copy(alpha = .06f),
+            ) {
+                Icon(Icons.Rounded.ArrowOutward, null, tint = StunBlue, modifier = Modifier.size(17.dp))
+            }
+        }
+        if (endpoint.isNotBlank()) {
+            StunActionButton(label = "复制", onClick = onCopy, background = StunGreen.copy(alpha = .08f)) {
+                StunCopyIcon(StunGreen, StunGreen, Modifier.size(16.dp))
+            }
+        }
+    }
+}
+
+@Composable private fun StunActionButton(
+    label: String,
+    onClick: () -> Unit,
+    background: Color,
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.size(32.dp).semantics { contentDescription = label },
+        shape = RoundedCornerShape(10.dp),
+        color = background,
+    ) {
+        Box(contentAlignment = Alignment.Center) { content() }
+    }
+}
+
+@Composable private fun StunTraffic(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    bytes: Long,
+    color: Color,
+    background: Color,
+) {
+    Surface(shape = RoundedCornerShape(99.dp), color = background) {
+        Row(
+            Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, null, tint = color, modifier = Modifier.size(13.dp))
+            Spacer(Modifier.width(3.dp))
+            Text(
+                formatStunBytes(bytes),
+                color = color,
+                fontSize = 11.sp,
+                lineHeight = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
 }
 
 @Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, error: String, saving: Boolean, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {

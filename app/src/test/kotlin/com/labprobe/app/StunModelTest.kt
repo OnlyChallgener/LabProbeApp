@@ -165,7 +165,7 @@ class StunModelTest {
 
         assertFalse(pending.ready)
         assertEquals("已保存 / 正在确认穿透", stunRuleStateLabel(pending, agentOnline = true))
-        assertEquals("STUN 地址已获取", stunRuleStateLabel(sampleStunRule(), agentOnline = true))
+        assertEquals("地址已获取", stunRuleStateLabel(sampleStunRule(), agentOnline = true))
     }
 
     @Test
