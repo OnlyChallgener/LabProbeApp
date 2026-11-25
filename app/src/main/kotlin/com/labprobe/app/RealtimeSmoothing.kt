@@ -53,6 +53,7 @@ class RealtimeDisplaySmoother {
     private data class RouterRenderKey(
         val vector: RouterVector,
         val discrete: RouterDiscrete,
+        val wans: String?,
         val sampleEpochMs: Long,
         val stale: Boolean,
     )
@@ -76,6 +77,7 @@ class RealtimeDisplaySmoother {
     private var routerDisplayed = RouterVector()
     private var routerTarget = RouterVector()
     private var routerDiscrete = RouterDiscrete()
+    private var routerWans: String? = null
     private var routerDirty = false
     private var routerSampleEpochMs = 0L
     private var routerSource = ""
@@ -105,6 +107,9 @@ class RealtimeDisplaySmoother {
         if (epochMs < routerSampleEpochMs) return
 
         trendHistory.record(payload, now)
+        if (payload.has("wans")) {
+            routerWans = payload.optJSONArray("wans")?.toString()
+        }
 
         val target = RouterVector(
             uploadBps = measuredRouterNumber(payload, "uploadBps") ?: routerTarget.uploadBps,
@@ -223,7 +228,7 @@ class RealtimeDisplaySmoother {
             storagePercent = if (routerDisplayed.storagePercent < 0.0) -1.0 else roundedTenth(routerDisplayed.storagePercent),
         )
         val discrete = devicesOnlineCount?.let { routerDiscrete.copy(onlineDeviceCount = it) } ?: routerDiscrete
-        val key = RouterRenderKey(rounded, discrete, routerSampleEpochMs, stale)
+        val key = RouterRenderKey(rounded, discrete, routerWans, routerSampleEpochMs, stale)
         if (key == lastRouterRender) return null
         lastRouterRender = key
 
@@ -252,6 +257,7 @@ class RealtimeDisplaySmoother {
             if (value >= 0.0) sample.put(field, value)
         }
         if (discrete.ipv6Connections >= 0L) sample.put("ipv6Connections", discrete.ipv6Connections)
+        routerWans?.let { sample.put("wans", JSONArray(it)) }
         if (routerSource.isNotBlank()) sample.put("source", routerSource)
         return mergeLiteRouterRealtime(base, sample).also {
             it.put("realtimeSampleAgeMs", ageMs)
@@ -317,6 +323,7 @@ class RealtimeDisplaySmoother {
         routerDisplayed = RouterVector()
         routerTarget = RouterVector()
         routerDiscrete = RouterDiscrete()
+        routerWans = null
         routerDirty = false
         routerSampleEpochMs = 0L
         routerSource = ""

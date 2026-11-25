@@ -36,6 +36,20 @@ class RouterDashboardRealtimeRaceTest {
     }
 
     @Test
+    fun lateSlowSnapshotCannotRollBackPerWanTelemetry() {
+        val current = mergeLiteRouterRealtime(null, JSONObject()
+            .put("sampleEpochMs", 20_000L)
+            .put("wans", org.json.JSONArray("[{\"wanId\":\"wan1\",\"uploadBps\":2000}]")))
+        val late = JSONObject("""{"telemetryEpoch":10,"telemetry":{"wans":[{"wanId":"wan","uploadBps":10}]}}""")
+
+        val result = requireNotNull(mergeRouterDashboardSnapshot(current, late))
+        val rows = result.getJSONObject("telemetry").getJSONArray("wans")
+        assertEquals(1, rows.length())
+        assertEquals("wan1", rows.getJSONObject(0).getString("wanId"))
+        assertEquals(2000, rows.getJSONObject(0).getInt("uploadBps"))
+    }
+
+    @Test
     fun newerNestedSnapshotUpdatesFlatAndNestedReadingsTogether() {
         val current = mergeLiteRouterRealtime(null, JSONObject()
             .put("sampleEpochMs", 10_000L).put("cpuPercent", 4).put("uploadBps", 10))

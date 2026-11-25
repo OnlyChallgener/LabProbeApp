@@ -78,6 +78,20 @@ class LiteRealtimeProjectionTest {
     }
 
     @Test
+    fun perWanTelemetryIsReplacedAtomicallyWithoutTouchingAggregateRates() {
+        val base = mergeLiteRouterRealtime(null, JSONObject("""
+            {"sampleEpochMs":1000,"uploadBps":3000,"wans":[{"wanId":"wan","uploadBps":1000}]}
+        """.trimIndent()))
+        val result = mergeLiteRouterRealtime(base, JSONObject("""
+            {"sampleEpochMs":2000,"wans":[{"wanId":"wan","uploadBps":0},{"wanId":"wan1","uploadBps":2000}]}
+        """.trimIndent()))
+        val rows = result.getJSONObject("telemetry").getJSONArray("wans")
+        assertEquals(2, rows.length())
+        assertEquals("wan1", rows.getJSONObject(1).getString("wanId"))
+        assertEquals(3000L, result.getLong("uploadBps"))
+    }
+
+    @Test
     fun repeatedFreshSampleIsFreshWithoutPretendingItIsANewerMeasurement() {
         val sample = JSONObject("""
             {"sampleEpochMs":1000,"sampleAgeMs":9000,"stale":false}

@@ -26,6 +26,18 @@ class RealtimeSmoothingFreshnessTest {
     }
 
     @Test
+    fun perWanOnlyUpdateStillRendersWithoutChangingAggregateVector() {
+        val smoother = RealtimeDisplaySmoother()
+        smoother.acceptRouter(sample(1_000L, 100L).put("wans", org.json.JSONArray("[{\"wanId\":\"wan\",\"uploadBps\":100}]")), now = 1_000L)
+        val first = requireNotNull(smoother.renderRouter(JSONObject(), now = 1_000L))
+        smoother.acceptRouter(sample(2_000L, 100L).put("wans", org.json.JSONArray("[{\"wanId\":\"wan\",\"uploadBps\":200}]")), now = 2_000L)
+        val second = requireNotNull(smoother.renderRouter(first, now = 2_000L))
+        val rows = second.getJSONObject("telemetry").getJSONArray("wans")
+        assertEquals(200, rows.getJSONObject(0).getInt("uploadBps"))
+        assertEquals(first.optDouble("cpuPercent"), second.optDouble("cpuPercent"), 0.001)
+    }
+
+    @Test
     fun normalRepeatedFrameAgeKeepsTheOriginalExpiry() {
         val smoother = RealtimeDisplaySmoother()
         smoother.acceptRouter(sample(1_000L, 100L), now = 1_000L)

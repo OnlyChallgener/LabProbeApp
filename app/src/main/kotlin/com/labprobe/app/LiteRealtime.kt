@@ -128,6 +128,10 @@ fun mergeLiteRouterRealtime(base: JSONObject?, sample: JSONObject): JSONObject {
         copyMeasurement(wan, it)
         copyMeasurement(root, it)
     }
+    if (sample.has("wans")) {
+        val wans = sample.optJSONArray("wans")
+        if (wans == null) telemetry.remove("wans") else telemetry.put("wans", JSONArray(wans.toString()))
+    }
     listOf("cpuPercent", "memoryPercent", "temperatureC", "temperature2gC", "temperature5gC",
         "storagePercent", "uptimeSeconds", "onlineDeviceCount").forEach {
         copyMeasurement(telemetry, it)
