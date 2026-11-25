@@ -2362,12 +2362,11 @@ private fun DdnsCard(record:DdnsRecord,nativeDdns:Boolean=false,onEdit:()->Unit,
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(2.dp)){
                     Text(domainText,style=LabTypography.ValueStrong,maxLines=2,overflow=TextOverflow.Clip)
                     Text("$providerText · $typeText · $interfaceText",fontSize = LabTypography.Caption.fontSize,fontWeight=FontWeight.SemiBold,color=RouterMuted)
-                    val detail = when {
-                        record.ip.isNotBlank() -> record.ip
-                        record.lastUpdatedAt > 0L -> "最后更新 ${labProbeTimeText(record.lastUpdatedAt)}"
-                        else -> record.status.ifBlank { "等待更新" }
-                    }
+                    val detail = nativeDdnsDetailText(record)
                     Text(detail,style=LabTypography.Caption.copy(color=if(warning)RouterAmber else if(record.ip.isBlank())RouterMuted else RouterBlue),maxLines=2,overflow=TextOverflow.Clip)
+                    if (record.lastUpdatedAt > 0L) {
+                        Text("最后更新：${labProbeTimeText(record.lastUpdatedAt)}",fontSize=LabTypography.Caption.fontSize,color=RouterMuted)
+                    }
                 }
             }
             Switch(checked=record.enabled,onCheckedChange={onToggle()},modifier=Modifier.scale(.76f),colors=SwitchDefaults.colors(checkedTrackColor=accent))
