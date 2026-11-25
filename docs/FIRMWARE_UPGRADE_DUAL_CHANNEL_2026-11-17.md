@@ -34,19 +34,20 @@ APP → HUB → 设备自研模块，**完全不走厂商链路**：
 
 证据：`shinya_upgrade.lua:67-78`；wrapper 见 `tree/new/usr/local/lua/dev_sta/ehr_beta_upgrade.lua:114-214`。
 
-### 1.3 97% 这个数字从哪来
+### 1.3 97% / 78% 这个数字从哪来（2026-11-18 真机已证）
 
-- **我们的 APP 现在不产出百分比**：`watchUpgrade` 只把 HUB 的 `message` 文字塞进 status（[HubToolsView.java:313-331](../tools/shinya_hub/HubToolsView.java#L313-L331)），HUB 侧也只有四个文字状态（`firmware_command.py:78-80`）。
-- 百分比只有两个可能来源：厂商 `ehr_beta_upgrade {action:'progress'}`（按已下字节/totalSize 计算，**封顶 99**，`ehr_beta_upgrade.lua:321-328`），或 eweb 页面自身的阈值逻辑——页面在 `status=="upgrading" || progress>=95` 时**停止轮询**转"等待重启"，超时才报"设备重启超时"（`fwdiff/web/new/static/js/systool3306d23997bfc493a6b8.js`）。
-- 因此"停在 97%"与"下载接近完成时中断"一致，而不是"根本没开始下"。
+- **我们的 APP 不产出百分比**：`watchUpgrade` 只把 HUB 的 `message` 文字塞进 status（[HubToolsView.java:313-331](../tools/shinya_hub/HubToolsView.java#L313-L331)），HUB 侧也只有四个文字状态（`firmware_command.py:78-80`）。用户截图的百分比页面是**官方 APP**，不是我们的 APP。
+- **官方 APP 的百分比与设备真实下载无关**。2026-11-18 12:00 官方 APP 显示 78% 时，设备同一时刻：无固件包（`find /tmp /overlay /root /var -size +512k` 无命中）、无 curl/wget/sysupgrade 进程、无到固件服务器的 ESTABLISHED TLS 连接、`ehr_beta_upgrade_status` 与 `upgrade.recommend.upgradeState` 均为空闲、mqlink/ctcapd 日志无 upgrade 命令。37.7MiB 下到 78% 必须同时具备"增长的包 + 下载进程 + 持续 TLS 连接"，三者全缺。详见 `test/_upgrade_live_20261117/LIVE_EVIDENCE_2026-11-18.md` §7。
+- 厂商自己的百分比只存在于 `ehr_beta_upgrade {action:'progress'}`（字节/totalSize，封顶 99）与 eweb 页面阈值（`upgrading || >=95` 停轮询）。官方 APP 走的是云推送链路，其进度条是客户端/云端计时动画。
+- 因此"停在 97%/78% 后失败"= **云端任务没有落地或超时**，而不是"下载接近完成时中断"。
 
-### 1.4 根因判断（标注证据强度）
+### 1.4 根因（已分层证实）
 
-**推断，尚未取到真机失败现场**：39MB 包在 `-m 180` 下需要约 1.8Mbps 持续吞吐；WAN 抖动或 `/tmp`（tmpfs，占内存）吃紧时 curl 会在末段退出。我们的脚本不看退出码、不校验 md5，把**半截包**交给 `sysupgrade`，于是表现为"下到 97% 卡住然后失败"。eweb 之所以成功，是因为它走 `-m 900` + md5 + 失败删包那条。
+1. **官方 APP 链路（用户实际看到的现象）**：云侧未向设备下发 upgrade。设备 mqlink/ctcapd 均无命令痕迹；官方云对本设备回 `{"code":1004,"msg":"no recommend version been found!"}`（`/tmp/macc_upgrade.log`，Nov 16 17:28）。APP 仍播放动画进度，最终报失败。**真机已证。**
+2. **我们自己的链路（潜在风险，本设备未触发）**：`shinya_upgrade.lua` **不在设备上**（`dev_sta get -m shinya_upgrade` 返回空载荷），所以我们的下发根本没有执行器。即便部署了它，`-m 180` + 不看退出码 + 不校验 md5 + 非空即刷的实现也会把半截包刷进去——39566318 字节在 180s 内需 ≈1.76Mbps 持续吞吐，而厂商 wrapper 的 900s 只需 ≈0.35Mbps。**代码级推断，缺陷成立但非本次现象成因。**
+3. eweb 之所以能成功：它走厂商 wrapper（`-m 900` + md5 + 失败删包），且是设备本地直接下发，不依赖云推送。
 
-这一条与既有审计结论一致：`docs/APP_FIRMWARE_UPGRADE_AUDIT_2026-11-13.md` 已写明"Lua 下载应验证 HTTP/下载退出状态与固件有效性…不能只因文件非空就刷写"。
-
-**待取真机证据**（失败后立刻只读采集，见 §6）。
+与既有审计一致：`docs/APP_FIRMWARE_UPGRADE_AUDIT_2026-11-13.md` 已写明"不能只因文件非空就刷写"。
 
 ---
 
@@ -220,8 +221,17 @@ APP → HUB → 设备自研模块，**完全不走厂商链路**：
 
 **尚未验证（不得写成已完成）**
 - `dev_sta set -m ehr_beta_upgrade` 经 HUB 的 UF 通道未真机实测（eweb 用的是同一条命令串，但需一次真实下发确认）。
-- 官方云 `firmware.ruijienetworks.com` 在本设备的实际返回未取证；多数设备只有官方更新，这条通道是主路径，必须实测。
-- 97% 失败现场未采集，§1.4 为代码推断。
+- 官方云推送为何不落地（设备 mqlink/ctcapd 无命令）超出设备侧取证范围，需云侧排查。
+
+**2026-11-18 真机已证（详见 `test/_upgrade_live_20261117/LIVE_EVIDENCE_2026-11-18.md`）**
+- 97%/78% 为官方 APP 动画进度，设备侧无下载；§1.3/§1.4 已改写。
+- `shinya_upgrade.lua` 不在设备上，`dev_sta get -m shinya_upgrade` 空载荷——模块缺失判据实测成立。
+- Beta 检测正常：外层 `code:0`、内层 `new.code:200`；`ehr_beta_version.lua:64` 接受 0 与 200，**但 `tools/version.lua:142` 只接受 0**，官方云若回 200 会永远走 UCI 回退。
+- `cur` 末尾带 `\n`（`readfile` 未 trim），版本比对必须先 strip。
+- 云端 `versionCode`（`1.279.1518`）与设备 `/etc/openwrt_version`（`1.279.2315`）整串不相等而 Release 号相同——**只能比 `Release(数字)`，不能比整串**。
+- `recommend_save` 的 `save_key` 收 `fileSize` 而云端字段是 `size`，UCI 回退路径 `totalSize=0` → **无百分比**。
+- `migrate_upgrade` 真机日志 `recommend_version=[]` + `upgradeState` 被抹回 100：§2.4 机制证实。
+- `/tmp/debug/ehr_beta_upgrade.log` 懒创建，**不能**用其缺失证明模块未被调用。
 
 ---
 
