@@ -28,10 +28,12 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 import okio.Buffer;
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 /** Routes the original business protocol to Hub, with dual-rail MACC tunnel support. */
 public final class HubInterceptor implements Interceptor {
     private static SharedPreferences preferences;
+    private static Context appContext;
     private static final String DEFAULT_HUB = "http://192.168.5.46:58543";
     private static final String LOGIN = "/api/v1/base/homeUser/accountPasswordLogin";
     private static final Set<String> BUSINESS_HOSTS = new HashSet<>(Arrays.asList(
@@ -59,6 +61,7 @@ public final class HubInterceptor implements Interceptor {
     private static final ConcurrentHashMap<String, Long> EWEB_PENDING_AT = new ConcurrentHashMap<>();
 
     public static void init(Context context) {
+        appContext = context.getApplicationContext();
         preferences = context.getApplicationContext().getSharedPreferences("labprobe_hub", 0);
         CachedHubResponses.init(context);
         HubToolSession.init(context);
@@ -173,6 +176,14 @@ public final class HubInterceptor implements Interceptor {
         Request.Builder request = original.newBuilder().url(target)
             .removeHeader("Cookie").removeHeader("Host")
             .header("X-LabProbe-Client", "shinya-hub/1");
+        if (path.endsWith("/experienceVisual/getApSpeedRate"))
+            request.header("X-Shinya-Chart", "smooth-v2");
+        if (path.endsWith("/homeAp/getStaList2") || path.endsWith("/homeDetail/getStaList2")
+                || path.contains("/netguard/onlineReport/") || path.contains("/netguard/staGuard/")
+                || path.endsWith("/childProtection/getOnlineTime")
+                || path.endsWith("/childProtection/getOnlineTimeReport")
+                || path.endsWith("/childProtection/getStaStatus"))
+            request.header("X-Shinya-Activity", "minutes-v2");
         if (login) request.removeHeader("Authorization");
         else if(path.endsWith("/homeUser/logout")) {
             if(captured==null)throw new IOException("登录账号已切换");
@@ -232,7 +243,20 @@ public final class HubInterceptor implements Interceptor {
         }
         boolean authenticationRejected=response.code()==401;
         try {
-            int code = new JSONObject(response.peekBody(2 * 1024 * 1024).string()).optInt("code", -1);
+            JSONObject decoded = new JSONObject(response.peekBody(2 * 1024 * 1024).string());
+            int code = decoded.optInt("code", -1);
+            // The original switch catches failures with a generic toast. Give
+            // the user the actionable, narrowly scoped dependency explanation.
+            if(path.endsWith("/eSportAccelerate/closeESportAccelerate") && code==409) {
+                final String reason=decoded.optString("msg", "");
+                final Context context=appContext;
+                if(context!=null && reason.startsWith("无法关闭：") && reason.length()<=120)
+                    new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(()->{
+                        try { if(captured!=null)HubToolSession.requireCurrent(captured);
+                              android.widget.Toast.makeText(context,reason,android.widget.Toast.LENGTH_LONG).show(); }
+                        catch(Exception ignored) { }
+                    },500);
+            }
             if(code==401)authenticationRejected=true;
             if (response.code() >= 500 || code == 503 || code == 504) {
                 Response saved = cached(original, cacheKey);
@@ -269,12 +293,115 @@ public final class HubInterceptor implements Interceptor {
             try{requireResponseScope(captured,forwarded,authenticationRejected);}
             catch(IOException switched){response.close();throw switched;}
         }
-        Response displayed=displaySpeed(original,response,path);
+        traceProjectContract(response,path);
+        Response displayed=displaySpeed(original,displayDeviceTimes(displayCoverage(captured,forwarded,response,path),path),path);
         if(captured!=null){
             try{requireResponseScope(captured,forwarded,authenticationRejected);}
             catch(IOException switched){displayed.close();throw switched;}
         }
         return displayed;
+    }
+
+    // Diagnostic only: no extra request and no credentials, names, addresses or
+    // raw project IDs in logcat. Compare creation/list contracts in one login.
+    private static final java.util.Map<String,String> projectTraces=new ConcurrentHashMap<>();
+    private static String projectTag(String id)throws Exception{
+        if(id==null||id.isEmpty())return "missing";
+        byte[] digest=java.security.MessageDigest.getInstance("SHA-256").digest(id.getBytes(StandardCharsets.UTF_8));
+        StringBuilder tag=new StringBuilder();for(int i=0;i<6;i++)tag.append(String.format(java.util.Locale.ROOT,"%02x",digest[i]&255));
+        return tag.toString();
+    }
+    private static void traceProjectContract(Response response,String path){
+        boolean create=path.endsWith("/homeAp/addProject"),list=path.endsWith("/apMonitor/getProjectList2");
+        if(!create&&!list)return;
+        try{
+            JSONObject root=new JSONObject(response.peekBody(262144).string()),data=root.optJSONObject("data");
+            StringBuilder line=new StringBuilder(create?"created":"list").append(" http=").append(response.code()).append(" code=").append(root.opt("code"));
+            if(create)line.append(" idTag=").append(projectTag(data==null?"":data.optString("projectId")));
+            else{
+                JSONArray rows=data==null?null:data.optJSONArray("dataList");line.append(" count=").append(rows==null?-1:rows.length()).append(" idTags=");
+                if(rows!=null)for(int i=0;i<Math.min(rows.length(),64);i++){JSONObject row=rows.optJSONObject(i);if(row!=null)line.append(projectTag(row.optString("projectId"))).append('/').append(projectTag(row.optString("buildingId"))).append(',');}
+            }
+            String value=line.toString(),key=create?"create":"list";
+            if(!value.equals(projectTraces.put(key,value)))android.util.Log.d("HubProjectTrace",value);
+        }catch(Exception ignored){/* Diagnostics must never alter a business response. */}
+    }
+
+    /** Normalize known router timestamps for the app Date contract; never infer a disconnect. */
+    private Response displayDeviceTimes(Response response,String path){
+        if(!response.isSuccessful()||!(path.contains("getDeviceInfoList")||path.contains("getProjectList")))return response;
+        try{
+            JSONObject body=new JSONObject(response.peekBody(4*1024*1024).string());
+            if(!normalizeOfflineTimes(body))return response;
+            Response displayed=response.newBuilder().removeHeader("Content-Length").body(ResponseBody.create(MediaType.parse("application/json; charset=utf-8"),body.toString())).build();
+            response.close();return displayed;
+        }catch(Exception ignored){return response;}
+    }
+    private boolean normalizeOfflineTimes(Object node){
+        boolean changed=false;
+        if(node instanceof JSONObject){
+            JSONObject obj=(JSONObject)node;
+            for(String field:new String[]{"lastSeenTime","offlineTime","lastSeenAt","connectionLostAt"}){
+                Object raw=obj.opt(field);
+                if(raw==null||raw==JSONObject.NULL)continue;
+                Long stamp=null;
+                if(raw instanceof Number||raw instanceof String){
+                    try{
+                        double value=Double.parseDouble(raw.toString());
+                        if(value<100000000000L)value*=1000;
+                        if(!Double.isNaN(value)&&!Double.isInfinite(value)
+                            &&value>=946684800000L&&value<=System.currentTimeMillis()+30000L)
+                            stamp=(long)value;
+                    }catch(NumberFormatException ignored){}
+                }
+                try{
+                    if(stamp==null){obj.put(field,JSONObject.NULL);changed=true;}
+                    else if(!(raw instanceof Number)||((Number)raw).doubleValue()!=stamp.doubleValue()){
+                        obj.put(field,stamp);changed=true;
+                    }
+                }catch(Exception ignored){}
+            }
+            // The original home formatter calls dayjs(routerInfo.lastSeenTime).
+            // Only a confirmed upstream disconnect may supply that contract;
+            // successful observations and HUB connectivity loss are different.
+            if((!obj.has("lastSeenTime")||obj.isNull("lastSeenTime"))
+                &&"upstream".equals(obj.optString("offlineTimeSource"))){
+                Object offline=obj.opt("offlineTime");
+                if(offline instanceof Number){
+                    try{obj.put("lastSeenTime",offline);changed=true;}catch(Exception ignored){}
+                }
+            }
+            java.util.Iterator<String> keys=obj.keys();
+            while(keys.hasNext()){
+                Object value=obj.opt(keys.next());
+                if(value instanceof JSONObject||value instanceof JSONArray)changed=normalizeOfflineTimes(value)||changed;
+            }
+        }else if(node instanceof JSONArray){
+            JSONArray arr=(JSONArray)node;
+            for(int i=0;i<arr.length();i++){
+                Object value=arr.opt(i);
+                if(value instanceof JSONObject||value instanceof JSONArray)changed=normalizeOfflineTimes(value)||changed;
+            }
+        }
+        return changed;
+    }
+
+    // addProject must return its stable outward projectId in the creation ACK.
+    // Do not block creation on a second all-projects read or guess by a name.
+
+    private Response displayCoverage(HubToolSession session,Request request,Response response,String path){
+        if(session==null||!response.isSuccessful()||!path.endsWith("/experienceVisual/getSignalCover"))return response;
+        try{
+            JSONObject body=new JSONObject(response.peekBody(2*1024*1024).string());
+            JSONObject data=body.optJSONObject("data");
+            if(body.optInt("code",-1)!=0||data==null)return response;
+            String requested="";
+            if(request.body()!=null){okio.Buffer buffer=new okio.Buffer();request.body().writeTo(buffer);requested=new JSONObject(buffer.readUtf8()).optString("projectId");}
+            HubCoverageSettings.bindProject(session,requested,data.optString("projectId"),data.optString("sn"));
+            HubCoverageSettings.apply(session,data);
+            Response displayed=response.newBuilder().removeHeader("Content-Length").body(ResponseBody.create(MediaType.parse("application/json; charset=utf-8"),body.toString())).build();
+            response.close();return displayed;
+        }catch(Exception ignored){return response;}
     }
 
     private void normalizeRates(JSONObject obj) {

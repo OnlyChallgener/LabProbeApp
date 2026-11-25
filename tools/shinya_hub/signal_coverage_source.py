@@ -4,10 +4,8 @@ from datetime import datetime
 from .daily import CHINA,day_of,pieces,MAX_GAP
 from .identifiers import mac_key
 
-# Preserve the local 2.4G weak boundary, and use the inspected APK's separate
-# 5G/6G middle-level boundary. Vendor cloud historical smoothing is private;
-# these limits define local observed episodes, not a claim of an identical score.
-LIMITS={'2.4G':-75,'5G':-84,'6G':-84}
+# Use the same explicit weak-signal boundary for every Wi-Fi band.
+LIMITS={'2.4G':-65,'5G':-65,'6G':-65}
 MAX_EPISODE_GAP = 180
 
 def initialize(db):
@@ -25,7 +23,7 @@ def weak(row):
     try:value=float(row.get('rssi'))
     except (ValueError,TypeError):return None
     if band not in LIMITS or not -120<=value<0:return None
-    return value<=LIMITS[band]
+    return value<LIMITS[band]
 
 def record(db,tenant,project,sn,mac,before,row,start,end,continuous):
     current=weak(row)

@@ -75,4 +75,22 @@ final class HubDialog {
         View footer=root.getChildAt(root.getChildCount()-1);
         return footer!=null&&footer.getMeasuredHeight()>0?footer.getMeasuredHeight():dp(root.getContext(),72);
     }
+
+    /** Operation feedback is always Chinese; never surface raw English errors. */
+    static String humanize(Throwable error){
+        String value=null;
+        for(Throwable cause=error;cause!=null;cause=(cause.getCause()==cause?null:cause.getCause())){
+            if(cause.getMessage()!=null&&!cause.getMessage().trim().isEmpty()){value=cause.getMessage().trim();break;}
+        }
+        if(value==null)return "操作未完成，请重试";
+        if(value.contains("Failed to connect")||value.contains("Unable to resolve host")||value.contains("ConnectException"))
+            return "网络连接异常，请检查网络后重试";
+        if(value.toLowerCase(java.util.Locale.ROOT).contains("timeout")||value.contains("timed out")||value.contains("超时"))
+            return "请求超时，请稍后重试";
+        if(value.contains("SSL")||value.contains("Certificate")||value.contains("证书"))
+            return "HTTPS 证书校验未通过，请核对证书指纹";
+        boolean chinese=false;
+        for(char c:value.toCharArray())if(Character.UnicodeScript.of(c)==Character.UnicodeScript.HAN){chinese=true;break;}
+        return chinese?value:"操作未完成，请重试";
+    }
 }

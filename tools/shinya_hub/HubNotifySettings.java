@@ -17,7 +17,9 @@ final class HubNotifySettings {
     interface Save { void run(JSONObject patch,Dialog dialog,TextView button); }
     interface Icon {
         Drawable get(String appId);
+        default Drawable get(String appId,String appName){return get(appId);}
         default void load(String appId,ImageView target){}
+        default void load(String appId,String appName,ImageView target){load(appId,target);}
     }
     interface Request { JSONObject run(JSONObject value)throws Exception; }
     static final class Saved {
@@ -242,6 +244,13 @@ final class HubNotifySettings {
         }
         static long occurred(JSONObject event){if(event==null)return 0;long value=event.optLong("triggeredAt",0);return value>0?value:event.optLong("createTime",0);}
         static String eventId(JSONObject event){if(event==null)return "";String value=event.optString("eventId","");return value.isEmpty()?event.optString("eventKey",""):value;}
+        static JSONObject primaryApp(JSONObject event){
+            if(event==null)return null;
+            if(!event.optString("appId").isEmpty()||!event.optString("appName").isEmpty())return event;
+            JSONArray apps=event.optJSONArray("apps");
+            for(int i=0;apps!=null&&i<apps.length();i++){JSONObject app=apps.optJSONObject(i);if(app!=null&&(!app.optString("appId").isEmpty()||!app.optString("appName").isEmpty()))return app;}
+            return null;
+        }
         static List<JSONObject> aggregate(JSONArray source,String filter,long cutoff,long now){
             Map<String,JSONObject> unique=new LinkedHashMap<>();
             for(int i=0;source!=null&&i<source.length();i++){
@@ -328,7 +337,7 @@ final class HubNotifySettings {
             }
             void updateMetrics(List<JSONObject> events){
                 int selected=chart.selectedHour,total=0;metricLabels.get(2).setText(selected<0?"高峰小时":"所选时段");Map<String,Integer> apps=new LinkedHashMap<>();Map<String,String> names=new HashMap<>();Calendar c=Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"));
-                for(JSONObject event:events){c.setTimeInMillis(occurred(event));if(selected>=0&&c.get(Calendar.HOUR_OF_DAY)!=selected)continue;total++;String id=event.optString("appId");if(!id.isEmpty()){apps.put(id,apps.containsKey(id)?apps.get(id)+1:1);String name=event.optString("appName");if(!name.isEmpty())names.put(id,name);}}
+                for(JSONObject event:events){c.setTimeInMillis(occurred(event));if(selected>=0&&c.get(Calendar.HOUR_OF_DAY)!=selected)continue;total++;Map<String,String> eventApps=new LinkedHashMap<>();String id=event.optString("appId"),name=event.optString("appName");if(!id.isEmpty())eventApps.put(id,name);JSONArray related=event.optJSONArray("apps");for(int i=0;related!=null&&i<related.length();i++){JSONObject app=related.optJSONObject(i);if(app!=null&&!app.optString("appId").isEmpty())eventApps.put(app.optString("appId"),app.optString("appName"));}for(Map.Entry<String,String> app:eventApps.entrySet()){apps.put(app.getKey(),apps.containsKey(app.getKey())?apps.get(app.getKey())+1:1);if(!app.getValue().isEmpty())names.put(app.getKey(),app.getValue());}}
                 int peak=0;for(int i=1;i<24;i++)if(chart.hours[i]>chart.hours[peak])peak=i;if(selected>=0)peak=selected;String main="";for(String id:apps.keySet())if(main.isEmpty()||apps.get(id)>apps.get(main))main=id;
                 values.get(0).setText(total+"次");values.get(1).setText(names.containsKey(main)?names.get(main):"--");values.get(2).setText(String.format(Locale.ROOT,"%02d–%02d时",peak,peak+1));values.get(2).setContentDescription(String.format(Locale.ROOT,"%02d:00至%02d:00",peak,peak+1));values.get(3).setText(apps.size()+"个");
 
@@ -342,7 +351,7 @@ final class HubNotifySettings {
                 LinearLayout words=col(a);title.setTypeface(null,Typeface.BOLD);words.addView(title);detail.setPadding(0,dp(a,4),0,0);words.addView(detail);addView(words,new LinearLayout.LayoutParams(0,-2,1));
             }
             void bind(JSONObject value,boolean line){event=value;separator=line;time.setText(clock.format(new Date(occurred(value))));title.setText(value.optString("title"));detail.setText(value.optString("content").replace("，不代表已完成付款","").replace("；应用访问不代表已完成支付",""));bindIcon();invalidate();}
-            void bindIcon(){if(event==null)return;String id=event.optString("appId");image.setTag(id);Drawable drawable=id.isEmpty()&&"usage".equals(event.optString("category"))?categoryDrawable(a,0):icons.get(id);if(image.getDrawable()!=drawable)image.setImageDrawable(drawable);if(!id.isEmpty())icons.load(id,image);}
+            void bindIcon(){if(event==null)return;JSONObject app=primaryApp(event);String id=app==null?"":app.optString("appId"),name=app==null?"":app.optString("appName");image.setTag(id.isEmpty()?name:id);Drawable drawable=id.isEmpty()&&name.isEmpty()&&"usage".equals(event.optString("category"))?categoryDrawable(a,0):icons.get(id,name);if(image.getDrawable()!=drawable)image.setImageDrawable(drawable);if(!id.isEmpty()||!name.isEmpty())icons.load(id,name,image);}
             @Override protected void dispatchDraw(android.graphics.Canvas canvas){super.dispatchDraw(canvas);if(separator){paint.setColor(0xffedf0f4);paint.setStrokeWidth(dp(a,1));canvas.drawLine(0,getHeight()-1,getWidth(),getHeight()-1,paint);}}
         }
         static final class HourChart extends View {

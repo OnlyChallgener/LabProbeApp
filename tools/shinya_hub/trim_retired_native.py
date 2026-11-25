@@ -56,6 +56,7 @@ def trim(decoded):
     package_file.write_text(source[:begin] + '\n'.join(code) + source[end:], encoding='utf8')
 
     classes = 0
+    retired_root = decoded.parent / 'retired-native'
     for smali in decoded.glob('smali*'):
         if not smali.is_dir(): continue
         for prefix in PREFIXES:
@@ -63,7 +64,12 @@ def trim(decoded):
             assert target.is_relative_to(decoded)
             if target.is_dir():
                 classes += len(list(target.rglob('*.smali')))
-                shutil.rmtree(target)
+                # Move aside instead of deleting: the APK build only reads the
+                # smali* tree, and keeping the audited originals around makes
+                # every build reproducible without bulk file deletion.
+                archive = retired_root / (str(smali.name) + '-' + prefix.replace('/', '_') + '-' + str(int(__import__('time').time() * 1000)))
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(target), str(archive))
     libraries = []
     for library in (decoded / 'lib').rglob('*sentry*.so'):
         assert library.resolve().is_relative_to(decoded)

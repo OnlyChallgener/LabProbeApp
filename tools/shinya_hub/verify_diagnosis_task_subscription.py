@@ -28,6 +28,7 @@ public class TaskSubscriptionCheck {
  private final LinkedHashMap<String,String> assistantTaskRows=new LinkedHashMap<>();
  private final LinkedHashMap<String,Long> assistantTaskTimes=new LinkedHashMap<>();
  private final LinkedHashMap<String,Integer> assistantTaskErrors=new LinkedHashMap<>();
+ private final LinkedHashMap<String,Long> assistantTaskRetryAt=new LinkedHashMap<>();
  private final LinkedHashMap<String,Integer> assistantTerminalSeen=new LinkedHashMap<>();
  private long prepareGeneration=1;
  private String activeAssistantProject="p",activeAssistantOwner="o";
@@ -82,8 +83,8 @@ public class TaskSubscriptionCheck {
   emptyCardSteps.getJSONObject(0).put("normalNumber",5);
   history.getJSONObject(0).put("messageDetail",emptyCard.toString());
   ok(new JSONArray(withoutTransientHistory(history.toString())).length()==2);
-  // Polling robustness: one non-running frame must NOT stop a live diagnosis;
-  // three consecutive terminal confirmations are required.
+  // Polling robustness: aggregate terminal status cannot stop a diagnosis
+  // while its matching card still reports running.
   TaskSubscriptionCheck poller=new TaskSubscriptionCheck();
   poller.activeAssistantProject="p";poller.activeAssistantOwner="o";
   poller.assistantTaskKinds.put("diag-live","diagnosis");
@@ -95,9 +96,9 @@ public class TaskSubscriptionCheck {
     .put("messages",msg);
   poller.pollAssistantTasks(session);
   ok(poller.assistantTaskKinds.containsKey("diag-live"));
-  poller.pollAssistantTasks(session);
-  ok(poller.assistantTaskKinds.containsKey("diag-live"));
-  // A third terminal confirmation is allowed to drop the task.
+  // Once the matching card is terminal too, publish that final snapshot and
+  // remove the subscription immediately.
+  msg.getJSONObject(0).put("state","complete");
   poller.pollAssistantTasks(session);
   ok(!poller.assistantTaskKinds.containsKey("diag-live"));
   // Empty/mismatched uuid must not kill a fresh live task.
@@ -109,7 +110,7 @@ public class TaskSubscriptionCheck {
     .put("messages",new JSONArray().put(new JSONObject().put("uuid","diag-live2").put("state","running")));
   p2.pollAssistantTasks(session);
   ok(p2.assistantTaskKinds.containsKey("diag-live2"));
-  System.out.println("PASS task subscription: stale history, single restore, replace-not-join, terminal frames, empty-card history filter, resilient polling");
+  System.out.println("PASS task subscription: stale history, single restore, replace-not-join, terminal frames, empty-card history filter, consistent terminal polling");
  }
 }'''
 

@@ -11,8 +11,9 @@ from hermes_dec.parsers.hbc_opcodes import hbc90 as ops
 from hbc_grow import insert_bodies
 from patch_terminal_ipv6 import Code
 
-# Retired feedback-URL storage, relabelled by patch_bundle.
-BANNER_CACHE_SID = 7029
+# Reuse the stable, unique reboot-count literal as a global cache key.
+# Its text remains unchanged because the diagnostic parser also uses it.
+BANNER_CACHE_SID = 2911
 
 
 def additions(reader, original, replace, data):
@@ -43,7 +44,9 @@ def additions(reader, original, replace, data):
     # The environment stays in r0; Call3 must not overwrite it with a timer ID.
     factory.emit('Call3', 7, 4, 3, 5, 6)
     factory.get(4,3,'setInterval')
-    factory.number(6,1000)
+    # Drain local UI feedback promptly; native code independently rate-limits
+    # actual HUB task polls to one per second.
+    factory.number(6,100)
     factory.emit('Call3',7,4,3,5,6)
     factory.emit('StoreToEnvironment',0,2,7)
     factory.emit('Ret', 2)
@@ -57,7 +60,7 @@ def additions(reader, original, replace, data):
     send.emit('LoadFromEnvironment', 2, 2, 6)
     send.get(2, 2, 'NativeModules')
     send.get(2, 2, 'sta')
-    send.emit('LoadConstString', 3, 7156)  # private assistantSend string
+    send.emit('LoadConstString', 3, 49425)  # exclusive retired WeChat method slot
     send.emit('GetByVal', 3, 2, 3)
     send.emit('LoadParam', 4, 1)
     send.emit('StoreToEnvironment',0,3,4)
@@ -90,6 +93,22 @@ def additions(reader, original, replace, data):
     close.emit('GetEnvironment', 0, 0)
     close.emit('LoadConstTrue', 1)
     close.emit('StoreToEnvironment', 0, 1, 1)
+    # Tell the native bridge to discard pending preparation callbacks when
+    # this chat transport is unmounted or replaced by another project.
+    close.emit('GetEnvironment',2,3);close.emit('LoadFromEnvironment',2,2,6)
+    close.get(2,2,'NativeModules');close.get(2,2,'sta')
+    close.emit('LoadConstString',3,49425);close.emit('GetByVal',3,2,3)
+    # Keep the project from this transport's last request so a delayed close
+    # from a previous project cannot cancel the new project's preparation.
+    close.emit('LoadFromEnvironment',4,0,3)
+    no_request=close.branch('JmpFalse',4)
+    close.emit('GetGlobalObject',6);close.get(6,6,'JSON');close.get(7,6,'parse')
+    close.emit('Call2',4,7,6,4)
+    close.string(5,'close');close.put(4,5,'requestMessageType')
+    close.get(7,6,'stringify')
+    close.emit('Call2',4,7,6,4);close.emit('CreateClosure',5,0,23461)
+    close.emit('Call3',7,3,2,4,5)
+    close.finish(no_request)
     close.emit('GetGlobalObject',2)
     close.get(3,2,'clearInterval')
     close.emit('LoadFromEnvironment',4,0,2)
@@ -147,7 +166,7 @@ def additions(reader, original, replace, data):
     banner.emit('NewObject',2)
     banner.emit('CreateClosure',1,8,24149)
     banner.put(2,1,'onClick')
-    banner.emit('LoadConstString',1,20357)
+    banner.emit('LoadConstString',1,344)
     banner.put(2,1,'content')
     banner.emit('NewArray',3,1)
     banner.emit('PutOwnByIndex',3,2,0)

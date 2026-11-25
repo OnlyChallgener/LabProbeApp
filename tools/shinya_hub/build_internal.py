@@ -22,6 +22,9 @@ SDK_LIB=Path('D:/Tools/labprobe-ui/cmdline-tools/latest/lib')
 
 def jar(pattern):
     matches=sorted(CACHE.glob(pattern))
+    extra_cache=os.environ.get('SHINYA_JAVA_CACHE')
+    if not matches and extra_cache:
+        matches=sorted(Path(extra_cache).glob(pattern))
     if not matches:raise FileNotFoundError(pattern)
     return matches[-1]
 
@@ -111,7 +114,7 @@ def main():
     aligned=work/'aligned.apk'
     aligner=SDK/'build-tools/36.0.0/zipalign.exe'
     command([aligner,'-P','16','-f','4',unsigned,aligned])
-    apksig=jar('com.android.tools.build/apksig/9.2.0/*/*.jar')
+    apksig=aligner.parent/'lib/apksigner.jar'
     signed=work/('shinya-hub-ui-dev-'+args.abi+'.apk')
     command([sys.executable,ROOT/'tools/shinya_hub/sign.py',aligned,signed,
              '--java-bin',JAVA,'--apksig',apksig,'--classes',ANALYSIS/'sign-classes'])

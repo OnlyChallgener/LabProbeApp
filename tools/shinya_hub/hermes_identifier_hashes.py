@@ -39,3 +39,25 @@ def update(data, reader):
             struct.pack_into('<I', data, offset + index * 4, expected)
             changed += 1
     return changed
+
+
+def verify_property_operands(reader):
+    """A literal has text but no imported SymbolID; by-ID opcodes require one.
+
+    Checking decoded spelling alone misses this runtime regression. Dynamic
+    property access must load such a literal and use GetByVal/PutByVal.
+    """
+    from hermes_dec.parsers.hbc_bytecode_parser import parse_hbc_bytecode
+    reads={'GetByIdShort','GetById','GetByIdLong','TryGetById','TryGetByIdLong',
+           'PutById','PutByIdLong','TryPutById','TryPutByIdLong'}
+    writes={'PutNewOwnByIdShort','PutNewOwnById','PutNewOwnByIdLong',
+            'PutNewOwnNEById','PutNewOwnNEByIdLong'}
+    count=0
+    for fid,header in enumerate(reader.function_headers):
+        for ins in parse_hbc_bytecode(header,reader):
+            name=ins.inst.name
+            sid=ins.arg4 if name in reads else ins.arg3 if name in writes else None
+            if sid is not None:
+                assert int(reader.string_kinds[sid])==1, ('non-identifier property operand',fid,ins.original_pos,name,sid,reader.strings[sid])
+                count+=1
+    return count

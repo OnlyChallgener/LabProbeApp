@@ -180,7 +180,7 @@ final class HubProjectPages {
     }
     private String message(Exception error){
         if(timedOut(error))return "请求超时，结果待核对。";
-        String value=error.getMessage();return value==null||value.trim().isEmpty()?"暂时无法完成，请重试":value;
+        return HubDialog.humanize(error);
     }
     private boolean timedOut(Throwable error){
         for(Throwable cause=error;cause!=null;cause=cause.getCause()){
@@ -356,7 +356,7 @@ final class HubProjectPages {
         picker=HubDialog.show(activity,"新建家庭",form,"取消","创建",d->{
             if(!active(id))return;String value=name.getText().toString().trim();if(value.isEmpty()||value.length()>64){toast("请输入 1–64 字的家庭名称");return;}
             d.dismiss();picker=null;run("正在创建家庭…",(requestId,owner)->{
-                JSONObject created=owner.request("homeAp/addProject",new JSONObject().put("projectName",value));String pid=created.optString("projectId");if(pid.isEmpty())throw new Exception("HUB 未返回家庭编号，请刷新后核对");
+                JSONObject document=owner.requestDocument("homeAp/addProject",new JSONObject().put("projectName",value));String pid=HubToolSession.createdProjectId(document);if(pid.isEmpty())throw new Exception("HUB 未返回家庭编号，请刷新后核对");
                 if(!pending(requestId))return;JSONObject rows=owner.request("apMonitor/getProjectList2",new JSONObject());
                 mainHandler.post(()->{if(active(requestId)){canCreateProject=rows.optBoolean("canCreateProject",false);setProjects(rows.optJSONArray("dataList"),pid);status.setText("家庭已创建，请继续核实路由器。");}});
             });

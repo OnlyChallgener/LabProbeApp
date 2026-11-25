@@ -292,9 +292,43 @@ local function read_file(path)
   return text;
 end
 
+-- Only the firmware's own official upgrade script may run. It re-reads the
+-- vendor recommendation, verifies the image and only then flashes, so no URL,
+-- path or shell token from a request can reach this call.
+local UPGRADE_SCRIPT = "/usr/lib/lua/smb/immediateUpgrade.lua"
+local UPGRADE_CONFIG = "/etc/config/upgrade"
+local UPGRADE_LOG = "/tmp/log/shinya-upgrade.log"
+local UPGRADE_FIELDS = {upgradeState = true, upgradeStateDesc = true, versionCode = true,
+                        fileName = true, fileSize = true, md5 = true}
+local LUA = locate("lua", "/usr/bin/lua");
+
+local function upgrade_state()
+  local file = io.open(UPGRADE_CONFIG, "r");
+  if not file then return {} end
+  local text = file:read(16384) or ""; file:close();
+  local state = {};
+  -- The same file holds the vendor private key, so only these names are copied.
+  for name, value in text:gmatch("option%s+(%w+)%s+'([^']*)'") do
+    if UPGRADE_FIELDS[name] then state[name] = value end
+  end
+  return state;
+end
+
 function module_get(param)
   local request = dkjson.decode(param or "{}") or {};
   local verb = request.action or "survey";
+  if verb == "latency_history" then
+    local function empty_samples() return setmetatable({}, {__jsontype="array"}) end
+    local file = io.open("/tmp/ping.log", "r")
+    if not file then return dkjson.encode({action=verb, available=false, samples=empty_samples()}) end
+    local raw=file:read(65537); file:close()
+    if not raw or #raw>65536 then return dkjson.encode({action=verb, available=false, samples=empty_samples()}) end
+    local rows=dkjson.decode(raw)
+    if type(rows)~="table" then return dkjson.encode({action=verb, available=false, samples=empty_samples()}) end
+    if next(rows)==nil then rows=empty_samples() end
+    return dkjson.encode({action=verb, available=true, observedAt=os.time(), samples=rows,
+      source="firmware-ping-log"})
+  end
   if verb == "survey" then
     local bands = request.bands or {"2.4G", "5G"};
     local result = {action = "survey", observedAt = os.time(), bands = {}};
@@ -305,6 +339,10 @@ function module_get(param)
     end
     result.errors = failures;
     return dkjson.encode(result);
+  elseif verb == "temperature" then
+    local ok, sensor = pcall(dofile, '/etc/shinya-agent/temperature.lua');
+    if not ok then return dkjson.encode({error = "temperature reader unavailable"}) end
+    return dkjson.encode(sensor.read());
   elseif verb == "ipv6" then
     -- All paths and commands are fixed; the request cannot supply an interface,
     -- file name, destination, prefix or shell argument. No probes/config writes.
@@ -358,10 +396,40 @@ function module_get(param)
     if text == nil then return dkjson.encode({action = "read", path = path, error = reason}) end
     if #text > OUTPUT_LIMIT then text = text:sub(1, OUTPUT_LIMIT) end
     return dkjson.encode({action = "read", path = path, observedAt = os.time(), contents = text});
+  elseif verb == "upgradeState" then
+    return dkjson.encode({action = "upgradeState", observedAt = os.time(), state = upgrade_state()});
+  elseif verb == "upgradeCapabilities" then
+    local function exists(path)
+      local f = io.open(path, "r"); if not f then return false end; f:close(); return true
+    end
+    return dkjson.encode({action=verb, beta=exists("/usr/local/lua/dev_sta/ehr_beta_upgrade.lua"),
+      official=exists(UPGRADE_SCRIPT)});
+  elseif verb == "officialVersion" then
+    local pipe = io.popen("timeout -t 35 /sbin/macc_upgrade.sh --version-check self 2>/dev/null", "r");
+    if not pipe then return dkjson.encode({action=verb, error="version check unavailable"}) end
+    local raw = pipe:read(131073) or ""; pipe:close();
+    if #raw > 131072 then return dkjson.encode({action=verb, error="version response too large"}) end
+    local doc = dkjson.decode(raw);
+    if type(doc) ~= "table" then return dkjson.encode({action=verb, error="version check failed"}) end
+    return dkjson.encode({action=verb, result=doc});
   end
   return dkjson.encode({error = "unknown action"});
 end
 
 function module_set(param)
+  local request = dkjson.decode(param or "{}") or {};
+  if request.action == "upgrade" then
+    local script = io.open(UPGRADE_SCRIPT, "r");
+    if not script then
+      return dkjson.encode({action = "upgrade", observedAt = os.time(), started = false,
+                            error = "official upgrade script is missing"});
+    end
+    script:close();
+    -- Detached: the vendor script downloads and flashes for minutes, far longer
+    -- than this call may block. It refuses on its own when nothing is newer.
+    os.execute(LUA .. " " .. UPGRADE_SCRIPT .. " >>" .. UPGRADE_LOG .. " 2>&1 &");
+    return dkjson.encode({action = "upgrade", observedAt = os.time(), started = true,
+                          state = upgrade_state()});
+  end
   return module_get(param);
 end

@@ -774,6 +774,12 @@ def patch(source, output):
     from patch_router_tools import additions as router_additions, STRINGS as router_strings
     router_additions(reader,original,replace_function,data)
     labels.update(router_strings)
+    from patch_legacy_upgrade_progress import apply as patch_legacy_upgrade_progress
+    patch_legacy_upgrade_progress(reader,original,edit_generator)
+    # F24074 was scheduled five times during the first minute and advanced the
+    # old page by 3% on each timer even before any router status was read.
+    replace_function(24074,bytes([ops.LoadConstUndefined.opcode,0,ops.Ret.opcode,0]),
+                     'remove original timed synthetic upgrade progress')
     # Helper remains registered; retain its route for the assistant banner.
     # The router-tools patch replaces function 23933 from the original body.
     # Restore the firmware Diagnose route after that replacement; doing it

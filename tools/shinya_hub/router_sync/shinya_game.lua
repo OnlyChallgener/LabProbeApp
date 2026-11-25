@@ -104,6 +104,42 @@ local function probe(host)
 end
 
 local native
+
+-- The rcgame ubus status object only exists while the game service runs, but the official
+-- page keeps the air-priority profile in the rcgame config. Read config first, fall back.
+local function policy()
+  local u=require("luci.model.uci").cursor()
+  local groups=setmetatable({},{__jsontype="array"})
+  for i=1,5 do
+    local name="air_group_"..i
+    if u:get("rcgame",name)=="user_group" then
+      groups[#groups+1]={group_name=name,
+        limitrate=tonumber(u:get("rcgame",name,"limitrate")),
+        nego_rate_min=tonumber(u:get("rcgame",name,"nego_rate_min")),
+        nego_rate_max=tonumber(u:get("rcgame",name,"nego_rate_max"))}
+    end
+  end
+  local function number(key) return tonumber(u:get("rcgame","global",key)) end
+  if #groups==5 and number("whole_air_rate_threshold") then
+    return {source="firmware.rcgame",air_group=groups,
+      whole_air_rate_threshold=number("whole_air_rate_threshold"),
+      single_air_rate_threshold=number("single_air_rate_threshold"),
+      whole_air_rate_count_limit=number("whole_air_rate_count_limit"),
+      single_air_adjust_count_limit=number("single_air_adjust_count_limit"),
+      group_flowctrl_level=number("group_flowctrl_level"),
+      whole_d_threshold_pre=number("whole_d_threshold_pre"),
+      whole_d_reserve=number("whole_d_reserve")}
+  end
+  local conn=require("ubus").connect()
+  if not conn then return {error="Firmware bus unavailable"} end
+  local ok,state=pcall(conn.call,conn,"rcgame","status",{})
+  conn:close()
+  if not ok or type(state)~="table" then return {error="Game policy unavailable"} end
+  local value={source="firmware.rcgame"}
+  for _,k in ipairs({"air_group","whole_air_rate_threshold","single_air_rate_threshold","whole_air_rate_count_limit","single_air_adjust_count_limit","group_flowctrl_level","whole_d_threshold_pre","whole_d_reserve"}) do value[k]=state[k] end
+  return value
+end
+
 function module_get(param)
   local request=json.decode(param or "{}") or {}
   if request.action=="catalog" then
@@ -136,16 +172,7 @@ function module_get(param)
       flowctrl=native("dev_config","get","flowctrl"),qos=native("dev_config","get","flowctrl_qos"),
       lowRate=native("ac_config","get","lowRate"),policy=json.decode(module_get(json.encode({action="policy"})))})
   end
-  if request.action=="policy" then
-    local conn=require("ubus").connect()
-    if not conn then return json.encode({error="Firmware bus unavailable"}) end
-    local ok,state=pcall(conn.call,conn,"rcgame","status",{})
-    conn:close()
-    if not ok or type(state)~="table" then return json.encode({error="Game policy unavailable"}) end
-    local value={source="firmware.rcgame"}
-    for _,k in ipairs({"air_group","whole_air_rate_threshold","single_air_rate_threshold","whole_air_rate_count_limit","single_air_adjust_count_limit","group_flowctrl_level","whole_d_threshold_pre","whole_d_reserve"}) do value[k]=state[k] end
-    return json.encode(value)
-  end
+  if request.action=="policy" then return json.encode(policy()) end
   if request.action and request.action~="probe" then return json.encode({error="Unsupported game action"}) end
   local rows={}
   for _,host in ipairs(HOSTS) do rows[#rows+1]=probe(host) end

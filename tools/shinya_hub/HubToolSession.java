@@ -31,6 +31,14 @@ final class HubToolSession {
     private static final Object refreshLock=new Object();
     private static final java.util.LinkedHashMap<String,OkHttpClient> clients=new java.util.LinkedHashMap<>();
     private static final java.util.LinkedHashMap<String,JSONObject> toolSnapshots=new java.util.LinkedHashMap<>();
+    private static final java.util.LinkedHashMap<String,String> pageSnapshots=new java.util.LinkedHashMap<>(32,0.75f,true);
+    private static void cachePageSnapshot(String id,String raw){
+        synchronized(pageSnapshots){
+            pageSnapshots.put(id,raw);long bytes=0;
+            for(String entry:pageSnapshots.values())bytes+=entry.length()*2L;
+            while(pageSnapshots.size()>32||bytes>8L*1024*1024){String oldest=pageSnapshots.keySet().iterator().next();bytes-=pageSnapshots.remove(oldest).length()*2L;}
+        }
+    }
     private static final java.util.Map<String,Long> snapshotWrites=new java.util.concurrent.ConcurrentHashMap<>();
     final String base, token, pin, account, accountId, hubId, refreshToken, bridgeToken;
     final long expireTime;
@@ -57,8 +65,12 @@ final class HubToolSession {
         }catch(Exception ignored){/* Native startup verification remains authoritative. */}
     }
     static synchronized void clearAuthentication(){
+        stopNotifications();
         if(context!=null)context.getSharedPreferences("hub-tool-session",0).edit().remove("session").commit();
         activeSession=null;verifiedSession=null;lastSaved="";
+    }
+    private static void stopNotifications(){
+        if(context!=null)try{HubAssistantNotifications.stop(context);}catch(RuntimeException ignored){}
     }
     static final class HubRequestException extends Exception {
         final int code;
@@ -129,7 +141,7 @@ final class HubToolSession {
             synchronized(HubToolSession.class){
                 HubToolSession latest=current();
                 if(!sameLogin(attempted,latest))return null;
-                verifiedSession=latest;
+                verifiedSession=latest;HubAssistantNotifications.sessionReady();
                 android.util.Log.i("HubToolSession","Remembered login verified with HUB");
                 return latest.bridgeToken;
             }
@@ -198,10 +210,11 @@ final class HubToolSession {
     /** Only an opaque device-local handle is passed to the original JS store. */
     static synchronized JSONObject accountLogin(String base,String pin,JSONObject value) throws Exception {
         if(value.optString("refreshToken").isEmpty()||value.optString("accountId").isEmpty()||value.optString("hubId").isEmpty())throw new Exception("HUB 尚未启用账号登录");
+        stopNotifications();
         byte[] random=new byte[32];new java.security.SecureRandom().nextBytes(random);String bridge=Base64.encodeToString(random,Base64.NO_WRAP|Base64.URL_SAFE);
         activeSession=new HubToolSession(base,"Bearer "+value.getString("token"),pin,value.getString("account"),value.getString("accountId"),value.getString("hubId"),value.getString("refreshToken"),bridge,value.getLong("expireTime"));verifiedSession=activeSession;lastSaved="";persist();
         android.content.SharedPreferences prefs=context.getSharedPreferences("labprobe_hub",0);org.json.JSONArray history=new org.json.JSONArray();history.put(base);org.json.JSONArray previous=new org.json.JSONArray(prefs.getString("address_history","[]"));for(int i=0;i<previous.length()&&history.length()<8;i++)if(!base.equals(previous.optString(i)))history.put(previous.optString(i));prefs.edit().putString("address_history",history.toString()).putString("login_account",value.getString("account")).commit();
-        return bridgeResult();
+        HubAssistantNotifications.sessionReady();return bridgeResult();
     }
     /** Capture the login represented by the original JS request before a worker
      * can wait for refresh. A stale opaque handle must never fall through as a
@@ -237,6 +250,51 @@ final class HubToolSession {
     static synchronized boolean clear(HubToolSession expected){
         if(activeSession!=expected)return false;
         clear();return true;
+    }
+    /** The bridge survives token refresh, but is replaced by every new login. */
+    static synchronized boolean passwordChanged(HubToolSession expected) throws Exception {
+        HubToolSession live=activeSession;
+        if(expected==null||live==null||expected.bridgeToken.isEmpty()||
+           !expected.bridgeToken.equals(live.bridgeToken)||!expected.base.equals(live.base)||
+           !expected.hubId.equals(live.hubId)||!expected.accountId.equals(live.accountId))return false;
+        android.content.SharedPreferences prefs=context.getSharedPreferences("labprobe_hub",0);
+        String selected=prefs.getString("base_url",""),user=prefs.getString("login_account","");
+        boolean selectedMatches=credentialKey(selected,user,false).equals(credentialKey(expected.base,expected.account,false));
+        String alias=selectedMatches?prefs.getString("login_address",""):"";
+        org.json.JSONArray entries;try{entries=new org.json.JSONArray(prefs.getString("login_history_entries","[]"));}catch(Exception corrupt){entries=new org.json.JSONArray();}
+        org.json.JSONArray cleaned=withoutOldPassword(entries,expected.base,expected.account,alias);
+        android.content.SharedPreferences.Editor edit=prefs.edit().putString("login_history_entries",cleaned.toString());
+        if(selectedMatches)edit.remove("login_password");
+        boolean persisted=edit.commit();
+        clearAuthentication();clearBootstrapToken();
+        if(!persisted)android.util.Log.w("HubAccount","Changed password: credential cleanup persistence failed");
+        return true;
+    }
+    static String credentialKey(String address,String user,boolean https){
+        try{
+            String text=address==null?"":address.trim();
+            if(text.isEmpty()||user==null||user.trim().isEmpty())return "";
+            if(!text.contains("://"))text=(https?"https://":"http://")+text;
+            java.net.URI uri=new java.net.URI(text);
+            String scheme=uri.getScheme(),host=uri.getHost();
+            if(host==null||!("http".equalsIgnoreCase(scheme)||"https".equalsIgnoreCase(scheme))||uri.getUserInfo()!=null)return "";
+            int port=uri.getPort()<0?("https".equalsIgnoreCase(scheme)?443:80):uri.getPort();
+            return scheme.toLowerCase(java.util.Locale.ROOT)+"://"+host.toLowerCase(java.util.Locale.ROOT)+":"+port+"|"+user.trim();
+        }catch(Exception invalid){return "";}
+    }
+    static org.json.JSONArray withoutOldPassword(org.json.JSONArray entries,String base,String account,String alias)throws Exception{
+        String canonical=credentialKey(base,account,false);
+        boolean secure=base!=null&&base.startsWith("https://");
+        String aliasKey=credentialKey(alias,account,secure);
+        org.json.JSONArray cleaned=new org.json.JSONArray();
+        for(int i=0;i<entries.length();i++){
+            org.json.JSONObject original=entries.optJSONObject(i);if(original==null)continue;
+            org.json.JSONObject row=new org.json.JSONObject(original.toString());
+            String key=credentialKey(row.optString("host"),row.optString("account"),row.optBoolean("https",false));
+            if(!key.isEmpty()&&(key.equals(canonical)||(!aliasKey.isEmpty()&&key.equals(aliasKey))))row.remove("password");
+            cleaned.put(row);
+        }
+        return cleaned;
     }
     static synchronized boolean authenticationAbsent(){return activeSession==null;}
     /** Startup awaits getToken first. Its expiry must come from that verified
@@ -283,10 +341,12 @@ final class HubToolSession {
         }
     }
     static synchronized void clear() {
+        stopNotifications();
         if(context!=null)context.getSharedPreferences("hub-tool-session",0).edit().remove("session").commit();
         if(context!=null)context.getSharedPreferences("hub-tool-snapshots",0).edit().clear().apply();
         toolSnapshots.clear();snapshotWrites.clear();
         if(context!=null)context.getSharedPreferences("hub-page-snapshots",0).edit().clear().apply();
+        synchronized(pageSnapshots){pageSnapshots.clear();}
         activeSession=null;verifiedSession=null;
         lastSaved="";
     }
@@ -322,12 +382,32 @@ final class HubToolSession {
         }catch(Exception ignored){/* A cache failure cannot discard a valid live result. */}
     }
     JSONObject pageSnapshot(String project,String sn,String resource){
-        try{return readSnapshot("hub-page-snapshots",project+"/"+sn+"/"+resource);
+        try{String path=project+"/"+sn+"/"+resource;String id=snapshotId(path);
+            synchronized(pageSnapshots){String raw=pageSnapshots.get(id);if(raw!=null)return new JSONObject(raw);}
+            JSONObject saved=readSnapshot(resource.startsWith("coverage-")?"hub-coverage-settings":resource.startsWith("speedtest-")?"hub-speed-snapshots":"hub-page-snapshots",path);
+            if(saved==null&&resource.startsWith("speedtest-")){
+                saved=readSnapshot("hub-page-snapshots",path);
+                if(saved!=null)savePageSnapshot(project,sn,resource,saved);
+            }
+            synchronized(pageSnapshots){String newer=pageSnapshots.get(id);if(newer!=null)return new JSONObject(newer);if(saved!=null)cachePageSnapshot(id,saved.toString());}
+            return saved;
         }catch(Exception ignored){return null;}
     }
     void savePageSnapshot(String project,String sn,String resource,JSONObject value){
-        try{String raw=value.toString();if(raw.length()>1500000)return;String id=snapshotId(project+"/"+sn+"/"+resource);Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,key());c.updateAAD(id.getBytes(StandardCharsets.UTF_8));String encrypted=Base64.encodeToString(c.getIV(),Base64.NO_WRAP)+":"+Base64.encodeToString(c.doFinal(raw.getBytes(StandardCharsets.UTF_8)),Base64.NO_WRAP);
-            android.content.SharedPreferences p=context.getSharedPreferences("hub-page-snapshots",0);android.content.SharedPreferences.Editor e=p.edit();if(!p.contains(id)&&p.getAll().size()>=32)e.remove(p.getAll().keySet().iterator().next());e.putString(id,encrypted).commit();
+        try{String raw=value.toString();if(raw.length()>1500000)return;String id=snapshotId(project+"/"+sn+"/"+resource);
+            cachePageSnapshot(id,raw);
+            Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(Cipher.ENCRYPT_MODE,key());c.updateAAD(id.getBytes(StandardCharsets.UTF_8));String encrypted=Base64.encodeToString(c.getIV(),Base64.NO_WRAP)+":"+Base64.encodeToString(c.doFinal(raw.getBytes(StandardCharsets.UTF_8)),Base64.NO_WRAP);
+            boolean manual=resource.startsWith("coverage-")||resource.startsWith("speedtest-");
+            android.content.SharedPreferences p=context.getSharedPreferences(resource.startsWith("speedtest-")?"hub-speed-snapshots":manual?"hub-coverage-settings":"hub-page-snapshots",0);android.content.SharedPreferences.Editor e=p.edit();if(!manual&&!p.contains(id)&&p.getAll().size()>=32)e.remove(p.getAll().keySet().iterator().next());e.putString(id,encrypted).apply();
+        }catch(Exception ignored){}
+    }
+    synchronized void saveSpeedSnapshot(String project,String sn,JSONObject value){
+        if(project==null||project.isEmpty()||sn==null||sn.isEmpty()||value==null||!sn.equals(value.optString("sn")))return;
+        long timestamp=value.optLong("timestamp",0);if(timestamp<=0)return;
+        JSONObject previous=pageSnapshot(project,sn,"speedtest-last");
+        try{
+            if(previous==null||previous.optLong("timestamp",0)<timestamp)savePageSnapshot(project,sn,"speedtest-last",value);
+            savePageSnapshot(project,"","speedtest-target",new JSONObject().put("sn",sn));
         }catch(Exception ignored){}
     }
     static String certificatePin(X509Certificate cert) throws Exception {
@@ -416,6 +496,68 @@ final class HubToolSession {
         HubToolSession latest=fresh(this);
         JSONObject result=call(latest.base,latest.pin,resource,latest.token,body);requireCurrent(latest);return result;
     }
+    JSONObject requestDocument(String resource,JSONObject body) throws Exception {
+        HubToolSession latest=fresh(this);
+        JSONObject document=callDocument(latest.base,latest.pin,resource,latest.token,body);
+        requireCurrent(latest);return document;
+    }
+    /** The create ACK carries the outward id as data itself; the older object form stays readable. */
+    static String createdProjectId(JSONObject document){
+        if(document==null)return "";
+        Object data=document.opt("data");
+        if(data instanceof JSONObject){
+            JSONObject row=(JSONObject)data;
+            String id=row.optString("projectId");
+            return id.isEmpty()?row.optString("buildingId"):id;
+        }
+        return data==null||data==JSONObject.NULL?"":String.valueOf(data).trim();
+    }
+    interface NoticeCall { void set(okhttp3.Call call); }
+    JSONObject waitNotices(JSONObject body,NoticeCall capture)throws Exception {
+        HubToolSession latest=fresh(this);requireCurrent(latest);
+        JSONObject result=callDocument(latest.base,latest.pin,"hub/xiaoxing/notificationWait",latest.token,body,20,capture).getJSONObject("data");
+        requireCurrent(latest);return result;
+    }
+    byte[] cachedChildCatalogIcon(String iconUrl) {
+        try {
+            android.net.Uri uri=android.net.Uri.parse(iconUrl==null?"":iconUrl);String path=uri.getPath();
+            if(!"https".equals(uri.getScheme())||!"shinyaapp.ruijie.com.cn".equals(uri.getHost())||uri.getQuery()!=null||uri.getFragment()!=null||path==null||!path.matches("/assets/icons/[0-9a-f]{64}"))return null;
+            String hash=path.substring(path.lastIndexOf('/')+1);java.io.File file=new java.io.File(context.getCacheDir(),"hub-app-icon-"+hash);
+            if(!file.isFile()||file.length()<1||file.length()>1048576)return null;
+            byte[] data=new byte[(int)file.length()];try(java.io.DataInputStream stream=new java.io.DataInputStream(new java.io.FileInputStream(file))){stream.readFully(data);}
+            StringBuilder actual=new StringBuilder();for(byte b:MessageDigest.getInstance("SHA-256").digest(data))actual.append(String.format("%02x",b&255));
+            return hash.equals(actual.toString())?data:null;
+        }catch(Exception ignored){return null;}
+    }
+    byte[] childCatalogIcon(String iconUrl) throws Exception {
+        // Only the packaged icon endpoint used by the children's app catalog;
+        // never forward credentials to the URL supplied by a catalog entry.
+        android.net.Uri source=android.net.Uri.parse(iconUrl==null?"":iconUrl);
+        String path=source.getPath();
+        if(!"https".equals(source.getScheme())||!"shinyaapp.ruijie.com.cn".equals(source.getHost())||
+           source.getQuery()!=null||source.getFragment()!=null||path==null||!path.matches("/assets/icons/[0-9a-f]{64}"))throw new java.io.IOException("Invalid catalog icon");
+        byte[] cached=cachedChildCatalogIcon(iconUrl);if(cached!=null)return cached;
+        HubToolSession latest=fresh(this);HttpUrl baseUrl=HubInterceptor.normalize(latest.base);
+        if(baseUrl==null)throw new java.io.IOException("HUB unavailable");
+        Request request=new Request.Builder().url(baseUrl.newBuilder().encodedPath(path).build()).header("Authorization",latest.token).build();
+        try(Response response=client(baseUrl,latest.pin).newCall(request).execute()){
+            if(!response.isSuccessful()||response.body()==null||response.body().contentLength()>1048576)throw new java.io.IOException("Icon unavailable");
+            java.io.ByteArrayOutputStream buffer=new java.io.ByteArrayOutputStream();
+            try(java.io.InputStream in=response.body().byteStream()){byte[] chunk=new byte[8192];int count;while((count=in.read(chunk))!=-1){if(buffer.size()+count>1048576)throw new java.io.IOException("Icon too large");buffer.write(chunk,0,count);}}
+            byte[] bytes=buffer.toByteArray();
+            requireCurrent(latest);
+            StringBuilder actual=new StringBuilder();for(byte b:MessageDigest.getInstance("SHA-256").digest(bytes))actual.append(String.format("%02x",b&255));
+            String expected=path.substring(path.lastIndexOf('/')+1);
+            if(!expected.equals(actual.toString()))throw new java.io.IOException("Icon digest mismatch");
+            try{
+                java.io.File dir=context.getCacheDir(),target=new java.io.File(dir,"hub-app-icon-"+expected),temp=java.io.File.createTempFile("hub-icon-",".tmp",dir);
+                try{try(java.io.FileOutputStream out=new java.io.FileOutputStream(temp)){out.write(bytes);}if(!temp.renameTo(target)&&!target.isFile())throw new java.io.IOException("Icon cache write failed");}finally{temp.delete();}
+                java.io.File[] files=dir.listFiles((folder,name)->name.startsWith("hub-app-icon-"));
+                if(files!=null){java.util.Arrays.sort(files,(a,b)->Long.compare(a.lastModified(),b.lastModified()));long total=0;for(java.io.File f:files)total+=f.length();for(java.io.File f:files){if(total<=8L*1024*1024)break;long size=f.length();if(f.delete())total-=size;}}
+            }catch(Exception ignored){}
+            return bytes;
+        }
+    }
     Object requestValue(String resource,JSONObject body) throws Exception {
         HubToolSession latest=fresh(this);
         Object result=callDocument(latest.base,latest.pin,resource,latest.token,body).opt("data");requireCurrent(latest);return result;
@@ -424,15 +566,19 @@ final class HubToolSession {
         return callDocument(base,pin,resource,auth,body).getJSONObject("data");
     }
     private static JSONObject callDocument(String base,String pin,String resource,String auth,JSONObject body) throws Exception {
-        return callDocument(base,pin,resource,auth,body,("hub/maccAccount".equals(resource)||"hub/officialAccount".equals(resource)||"hub/projectManagement".equals(resource)||"homeAp/bindDevice2".equals(resource))?90:0);
+        return callDocument(base,pin,resource,auth,body,("hub/officialFloorAuthorization".equals(resource)||"hub/maccAccount".equals(resource)||"hub/officialAccount".equals(resource)||"hub/projectManagement".equals(resource)||"homeAp/bindDevice2".equals(resource))?90:0);
     }
     private static JSONObject callDocument(String base,String pin,String resource,String auth,JSONObject body,int deadline) throws Exception {
+        return callDocument(base,pin,resource,auth,body,deadline,null);
+    }
+    private static JSONObject callDocument(String base,String pin,String resource,String auth,JSONObject body,int deadline,NoticeCall capture) throws Exception {
         HttpUrl url=HubInterceptor.normalize(base);
         if(url==null)throw new Exception("HUB 地址无效");
         Request.Builder builder=new Request.Builder().url(url.newBuilder().encodedPath("/api/v1/"+resource).build())
             .post(RequestBody.create(MediaType.parse("application/json; charset=utf-8"),body.toString()));if(auth!=null)builder.header("Authorization",auth);Request request=builder.build();
         OkHttpClient transport=client(url,pin);if(deadline>0)transport=transport.newBuilder().connectTimeout(3,TimeUnit.SECONDS).readTimeout(deadline,TimeUnit.SECONDS).callTimeout(deadline,TimeUnit.SECONDS).build();
-        try(Response response=transport.newCall(request).execute()) {
+        okhttp3.Call pendingCall=transport.newCall(request);if(capture!=null)capture.set(pendingCall);
+        try(Response response=pendingCall.execute()) {
             // Preserve HTTP auth semantics even when a gateway's rejection has
             // no JSON body. Server errors and parse failures remain retryable.
             if(response.code()==401||response.code()==403)
@@ -443,6 +589,6 @@ final class HubToolSession {
             JSONObject result=new JSONObject(response.body().string());
             if(result.optInt("code",-1)!=0)throw new HubRequestException(result.optInt("code",-1),result.optString("msg","操作失败"));
             return result;
-        }
+        }finally{if(capture!=null)capture.set(null);}
     }
 }

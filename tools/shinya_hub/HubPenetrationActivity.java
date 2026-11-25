@@ -129,7 +129,7 @@ public final class HubPenetrationActivity extends Activity {
         final long g=generation;
         try{body.put("projectId",project).put("sn",sn);workers.execute(()->{
             try{JSONObject result=session.request("hub/penetration",body);ui.post(()->{if(!current()||g!=generation)return;consume(result);done.run(result);});}
-            catch(Exception e){ui.post(()->{if(!current()||g!=generation)return;String action=body.optString("operation");if(action.equals("list")||action.equals("syncHistory")){loadError="应用读取失败，点击重试";scheduleRefresh();}else if(!action.equals("status"))toast(e.getMessage()==null?"操作失败，已保留应用":e.getMessage());if(failed!=null)failed.run();renderCards();});}
+            catch(Exception e){ui.post(()->{if(!current()||g!=generation)return;String action=body.optString("operation");if(action.equals("list")||action.equals("syncHistory")){loadError="应用读取失败，点击重试";scheduleRefresh();}else if(!action.equals("status"))toast(HubDialog.humanize(e));if(failed!=null)failed.run();renderCards();});}
         });}catch(Exception e){String action=body.optString("operation");if(action.equals("list")||action.equals("syncHistory")){loadError="应用读取失败，点击重试";scheduleRefresh();renderCards();}else toast("操作较多，请稍后重试");if(failed!=null)failed.run();}
     }
     private JSONObject body(String action,String id){JSONObject b=new JSONObject();try{b.put("operation",action);if(id!=null)b.put("ruleId",id);}catch(Exception ignored){}return b;}

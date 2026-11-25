@@ -182,7 +182,7 @@ def main():
         data[-20:] = hashlib.sha1(data[:-20]).digest()
         patched = load(bytes(data))
         for sid,value in STRINGS.items(): patched.strings[sid] = value
-    for fid in (35691,35856,35859,35773,*FIDS):
+    for fid in (35691,35856,35859,35773,33165,*FIDS):
         check_frame(patched,fid); check_read_caches(patched,fid)
         positions = {i.original_pos for i in parse_hbc_bytecode(patched.function_headers[fid],patched)}
         for i in parse_hbc_bytecode(patched.function_headers[fid],patched):

@@ -41,9 +41,6 @@ final class CachedHubResponses {
         if (leaf.equals("getTunnelUrl") || leaf.equals("getRdpTunnel") ||
             leaf.equals("checkStaRdp")) return false;
         if (path.endsWith("/api/v1/base/homeUser/info")) return true;
-        if (request.method().equals("GET") &&
-            (path.endsWith("/device/state/apRealTimeSpeed") ||
-             path.endsWith("/device/state/staRealTimeSpeed"))) return true;
         if (leaf.equals("sendCmd")) {
             if (request.body() == null) return false;
             Buffer body = new Buffer();
@@ -69,7 +66,8 @@ final class CachedHubResponses {
             if (request.body() != null) request.body().writeTo(body);
             String base=request.url().newBuilder().encodedPath("/").query(null).build().toString();
             String scope = request.url().toString() + "\n" + request.method() + "\n" + HubToolSession.cacheIdentity(base,auth)
-                + "\n" + request.header("projectId") + "\n" + body.readUtf8();
+                + "\n" + request.header("projectId") + "\n" + request.header("X-Shinya-Chart")
+                + "\n" + request.header("X-Shinya-Activity") + "\n" + body.readUtf8();
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(scope.getBytes(StandardCharsets.UTF_8));
             StringBuilder result = new StringBuilder();
             for (byte b : digest) result.append(String.format("%02x", b & 255));

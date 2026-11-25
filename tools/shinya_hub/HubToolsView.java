@@ -60,8 +60,8 @@ public final class HubToolsView extends FrameLayout {
     private final List<JSONObject> devices=new ArrayList<>();
     private JSONArray projectRows=new JSONArray();
     private LinearLayout content; private TextView status,routerButton; private ProgressBar progress;
-    private View refreshControl;private ObjectAnimator refreshSpin;
-    private HubToolSession session; private String sn="",project="",mode="stun",preferredSn="",upgradeChannel="beta";
+    private View refreshControl;private ObjectAnimator refreshSpin;private ProgressBar upgradeProgress;
+    private HubToolSession session; private String sn="",project="",mode="stun",preferredSn="",preferredProject="",upgradeChannel="beta";
     private TextView cancelUpgrade;
     private boolean active=false,mutating=false;private int generation=0;
     private final Runnable poll=new Runnable(){public void run(){if(active){load(false);ui.postDelayed(this,5000);}}};
@@ -70,6 +70,7 @@ public final class HubToolsView extends FrameLayout {
     private int statusBarHeight(){int resource=getResources().getIdentifier("status_bar_height","dimen","android");return resource>0?getResources().getDimensionPixelSize(resource):dp(24);}
     private void applySafeInsets(WindowInsets insets){if(!mode.equals("stun"))return;int top=statusBarHeight();if(Build.VERSION.SDK_INT>=30&&insets!=null){android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars());if(bars.top>0)top=Math.max(top,bars.top);}else if(insets!=null&&insets.getSystemWindowInsetTop()>0){top=Math.max(top,insets.getSystemWindowInsetTop());}int[] xy=new int[2];getLocationOnScreen(xy);int pad=xy[1]>=top?0:Math.max(0,top-xy[1]);if(getPaddingTop()!=pad){setPadding(0,pad,0,0);relayout();}}
     public void setSn(String value){String next=value==null?"":value;if(next.equals(preferredSn))return;preferredSn=next;if(active){dismissRuleMenu();generation++;sn="";project="";render(null);restoreCached();if(projectRows.length()>0)selectPreferred();else connect();}}
+    public void setTarget(String projectId,String serial){preferredProject=projectId==null?"":projectId;setSn(serial);}
     int dp(float n){return (int)(getResources().getDisplayMetrics().density*n+.5f);}
     private float cardRadius(){return mode.equals("beta")?32:16;}
     private GradientDrawable surface(int fill,float radius,int stroke){GradientDrawable d=new GradientDrawable();d.setColor(fill);d.setCornerRadius(dp(radius));if(stroke!=0)d.setStroke(dp(1),stroke);return d;}
@@ -182,6 +183,7 @@ public final class HubToolsView extends FrameLayout {
         LayoutTransition transition=new LayoutTransition();transition.setDuration(180);
         transition.disableTransitionType(LayoutTransition.CHANGING);content.setLayoutTransition(transition);
         LinearLayout first=card();first.setBackground(new NetworkSurface(true));routerButton=text("当前项目",17,INK);first.addView(routerButton);gap(first,6);LinearLayout sync=row();progress=new ProgressBar(getContext());progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(TEAL));sync.addView(progress,new LinearLayout.LayoutParams(dp(13),dp(13)));status=text("正在同步",13,MUTED);LinearLayout.LayoutParams statusParams=new LinearLayout.LayoutParams(0,-2,1);statusParams.leftMargin=dp(6);sync.addView(status,statusParams);if(mode.equals("beta")){TextView refresh=button("刷新",true,()->load(true));refresh.setTextSize(13);refresh.setMinHeight(dp(30));refresh.setPadding(dp(10),dp(5),dp(10),dp(5));sync.addView(refresh);first.addView(sync);}
+        if(mode.equals("beta")){upgradeProgress=new ProgressBar(getContext(),null,android.R.attr.progressBarStyleHorizontal);upgradeProgress.setMax(100);upgradeProgress.setProgressTintList(ColorStateList.valueOf(TEAL));upgradeProgress.setVisibility(View.GONE);LinearLayout.LayoutParams bar=new LinearLayout.LayoutParams(-1,dp(5));bar.topMargin=dp(10);first.addView(upgradeProgress,bar);}
         if(mode.equals("stun")){gap(first,8);first.addView(button("＋ 新建穿透",true,()->editor(null)));}
         relayout();}
     @Override protected void onAttachedToWindow(){super.onAttachedToWindow();active=true;sn="";project="";devices.clear();projectRows=new JSONArray();setup();requestApplyInsets();post(()->applySafeInsets(null));restoreCached();connect();ui.removeCallbacks(poll);ui.postDelayed(poll,5000);}
@@ -194,7 +196,7 @@ public final class HubToolsView extends FrameLayout {
             ui.post(()->{if(!active||g!=generation)return;if(session!=null&&!sameAccount(session,scope))snapshots.clear();session=scope;projectRows=list;selectPreferred();});
         }catch(Exception error){ui.post(()->{if(active&&g==generation){busy(false);status.setText(message(error));if(sn.isEmpty())routerButton.setText("当前项目");}});}});}
     private void selectPreferred(){routerButton.setOnClickListener(null);devices.clear();JSONObject matched=null;int matches=0;
-        for(int i=0;i<projectRows.length();i++){JSONObject p=projectRows.optJSONObject(i);JSONArray aps=p==null?null:p.optJSONArray("apList");if(aps==null)continue;for(int j=0;j<aps.length();j++){JSONObject d=aps.optJSONObject(j);if(d!=null&&!preferredSn.isEmpty()&&preferredSn.equals(d.optString("sn"))){matched=p;matches++;break;}}}
+        for(int i=0;i<projectRows.length();i++){JSONObject p=projectRows.optJSONObject(i);JSONArray aps=p==null?null:p.optJSONArray("apList");if(aps==null||(!preferredProject.isEmpty()&&!preferredProject.equals(p.optString("projectId"))))continue;for(int j=0;j<aps.length();j++){JSONObject d=aps.optJSONObject(j);if(d!=null&&!preferredSn.isEmpty()&&preferredSn.equals(d.optString("sn"))){matched=p;matches++;break;}}}
         if(matches!=1){generation++;sn="";project="";render(null);busy(false);routerButton.setText("当前项目尚未就绪");status.setText("请返回首页选择项目，再打开 STUN 穿透");return;}
         try{JSONArray aps=matched.getJSONArray("apList");for(int j=0;j<aps.length();j++){JSONObject d=new JSONObject(aps.getJSONObject(j).toString());d.put("projectId",matched.getString("projectId")).put("projectName",matched.optString("name",matched.optString("projectName")));devices.add(d);}}catch(JSONException error){busy(false);status.setText("当前项目数据未完整同步");return;}
         for(JSONObject d:devices)if(d.optString("sn").equals(preferredSn)){select(d);return;}}
@@ -204,7 +206,7 @@ public final class HubToolsView extends FrameLayout {
     private void load(boolean force){if(!active||session==null||sn.isEmpty()||mutating||!reading.compareAndSet(false,true))return;final int g=generation;final String selected=snapshotKey(),selectedSn=sn,selectedProject=project,selectedName=routerButton.getText().toString();final HubToolSession auth=session;final JSONObject body;try{body=scope("list");if(force)body.put("force",1);}catch(Exception e){reading.set(false);return;}if(force||!snapshots.containsKey(selected)){busy(true);status.setText(force?"正在刷新…":"正在读取路由器数据…");}reads.execute(()->{try{JSONObject data=auth.request(mode.equals("beta")?"hub/beta":"hub/stun",body);if(mode.equals("stun")&&(data==null||data.optJSONArray("rules")==null))throw new Exception("路由器规则数据不完整，请刷新重试");if(mode.equals("stun"))auth.saveTools(selectedSn,selectedProject,selectedName,data);ui.post(()->{if(!active||g!=generation)return;if(mode.equals("beta")&&data!=null)upgradeChannel=data.optString("channel","beta");snapshots.put(selected,data);render(data);busy(false);String time=new java.text.SimpleDateFormat("HH:mm",java.util.Locale.CHINA).format(new Date());status.setText(mode.equals("beta")?"检测已更新 · "+time:"已同步");});}catch(Exception error){ui.post(()->{if(active&&g==generation){busy(false);status.setText(message(error));if(force)toast(message(error));}});}finally{reading.set(false);ui.post(()->{if(active&&g!=generation)load(false);});}});}
     private void render(JSONObject data){boolean switched=!renderedSn.equals(snapshotKey());renderedSn=snapshotKey();
         if(switched){dismissRuleMenu();while(content.getChildCount()>1)content.removeViewAt(1);ruleCards.clear();ruleContent.clear();betaContent="";emptyCard=null;emptySynced=false;}
-        if(data==null){if(ruleCards.isEmpty()&&emptyCard==null){emptyCard=card();for(int width:new int[]{140,210,190}){View line=new View(getContext());line.setBackground(surface(Color.rgb(240,243,246),8,0));emptyCard.addView(line,new LinearLayout.LayoutParams(dp(width),dp(16)));gap(emptyCard,16);}}relayout();return;}if(mode.equals("beta")){String channel=data.optString("channel","beta");String key=channel+"\n"+String.valueOf(data.opt("cur"))+"\n"+String.valueOf(data.opt("new"))+"\n"+String.valueOf(data.opt("status"));if(!key.equals(betaContent)){while(content.getChildCount()>1)content.removeViewAt(1);emptyCard=null;cancelUpgrade=null;if("official".equals(channel))renderOfficial(data);else renderBeta(data);betaContent=key;relayout();}return;}
+        if(data==null){if(ruleCards.isEmpty()&&emptyCard==null){emptyCard=card();for(int width:new int[]{140,210,190}){View line=new View(getContext());line.setBackground(surface(Color.rgb(240,243,246),8,0));emptyCard.addView(line,new LinearLayout.LayoutParams(dp(width),dp(16)));gap(emptyCard,16);}}relayout();return;}if(mode.equals("beta")){String channel=data.optString("channel","beta");String key=channel+"\n"+String.valueOf(data.opt("cur"))+"\n"+String.valueOf(data.opt("new"))+"\n"+String.valueOf(data.opt("official"))+"\n"+String.valueOf(data.opt("status"));if(!key.equals(betaContent)){while(content.getChildCount()>1)content.removeViewAt(1);emptyCard=null;cancelUpgrade=null;if("official".equals(channel))renderOfficial(data);else renderBeta(data);betaContent=key;relayout();}return;}
         JSONArray rules=data.optJSONArray("rules");if(rules==null){status.setText("规则未完整同步");return;}
         if(rules.length()==0){if(emptySynced)return;dismissRuleMenu();for(LinearLayout c:ruleCards.values())content.removeView(c);ruleCards.clear();ruleContent.clear();if(emptyCard!=null){content.removeView(emptyCard);emptyCard=null;}emptyCard=card();emptyCard.addView(toolIcon(),new LinearLayout.LayoutParams(dp(56),dp(56)));emptyCard.addView(text("还没有 STUN 穿透",18,INK));emptySynced=true;relayout();return;}emptySynced=false;
         if(emptyCard!=null){content.removeView(emptyCard);emptyCard=null;}
@@ -301,7 +303,13 @@ public final class HubToolsView extends FrameLayout {
         LinearLayout c=card();c.addView(text("当前版本",14,MUTED));
         String current=data.isNull("cur")?"":data.optString("cur").trim();
         c.addView(text(current.isEmpty()?"未取得版本信息":current,17,INK));gap(c,12);
-        c.addView(text("检测完成",16,TEAL));
+        JSONObject official=data.optJSONObject("official");
+        JSONArray versions=official==null?null:official.optJSONArray("firmwareList");
+        if(versions==null||versions.length()==0){c.addView(text("暂无可用的官方固件",16,MUTED));return;}
+        JSONObject recommendation=versions.optJSONObject(0);
+        if(recommendation==null){c.addView(text("官方固件检测未完成",16,MUTED));return;}
+        final String targetVersion=recommendation.optString("versionCode","");
+        c.addView(text(targetVersion.isEmpty()?"检测完成":targetVersion,16,TEAL));
         final int upgradeGeneration=generation;final HubToolSession upgradeOwner=session;
         final String upgradeProject=project,upgradeSn=sn;
         TextView flash=button("一键升级到 最新版",true,()->{
@@ -313,7 +321,7 @@ public final class HubToolsView extends FrameLayout {
                     if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn)||mutating)return;
                     mutating=true;status.setText("正在下发升级命令…");
                     writes.execute(()->{try{
-                        JSONObject body=upgradeScope(upgradeProject,upgradeSn,"start");body.put("channel","official");
+                        JSONObject body=upgradeScope(upgradeProject,upgradeSn,"start");body.put("channel","official").put("version",targetVersion);
                         JSONObject ack=upgradeOwner.request("hub/firmware/upgrade",body);
                         validateUpgradeAck(ack);
                         ui.post(()->{if(!upgradeCurrent(upgradeGeneration,upgradeOwner,upgradeProject,upgradeSn))return;
@@ -352,7 +360,7 @@ public final class HubToolsView extends FrameLayout {
     }
     private void watchUpgrade(int g,HubToolSession owner,String pid,String serial,int attempt,String channel){
         if(!upgradeCurrent(g,owner,pid,serial))return;
-        if(attempt>=150){mutating=false;status.setText("升级状态等待超时，请重新进入页面核对版本");return;}
+        if(attempt>=150){mutating=false;if(upgradeProgress!=null)upgradeProgress.setVisibility(View.GONE);if(cancelUpgrade!=null)cancelUpgrade.setVisibility(View.GONE);status.setText("升级状态等待超时，请重新进入页面核对版本");return;}
         ui.postDelayed(()->{if(!upgradeCurrent(g,owner,pid,serial))return;
             reads.execute(()->{try{
                 JSONObject body=upgradeScope(pid,serial,"state");body.put("channel",channel);
@@ -362,12 +370,18 @@ public final class HubToolsView extends FrameLayout {
                 // reboot. Stop polling; never report success from the client.
                 boolean writing="113".equals(code)||"200".equals(code)
                     ||"upgrading".equals(state)||"verifying".equals(state);
+                // 115/103/112 mean the vendor found no usable package: stop and
+                // re-run detection instead of polling a state that never moves.
+                boolean noPackage="115".equals(code)||"103".equals(code)||"112".equals(code);
                 boolean failed="failed".equals(state)||"error".equals(state)
-                    ||"116".equals(code)||"108".equals(code)||"110".equals(code)||"111".equals(code);
-                String msg=writing?"升级已启动，设备正在写入并重启":doc.optString("message","正在读取升级进度，请勿断电");
+                    ||"116".equals(code)||"108".equals(code)||"110".equals(code)||"111".equals(code)
+                    ||"106".equals(code)||"107".equals(code)||noPackage;
+                String msg="200".equals(code)?"设备报告升级成功，正在核对版本":writing?"升级已启动，设备正在写入并重启":doc.optString("message","正在读取升级进度，请勿断电");
                 boolean downloading="downloading".equals(state);
+                boolean knownProgress=downloading&&doc.has("progress")&&!doc.isNull("progress");
                 ui.post(()->{if(!upgradeCurrent(g,owner,pid,serial))return;
-                    status.setText(msg+(downloading&&doc.optInt("progress")>0?" · "+doc.optInt("progress")+"%":"")
+                    if(upgradeProgress!=null){upgradeProgress.setVisibility(failed?View.GONE:View.VISIBLE);upgradeProgress.setIndeterminate(!knownProgress);if(knownProgress)upgradeProgress.setProgress(Math.max(0,Math.min(100,doc.optInt("progress",0))));}
+                    status.setText(msg+(knownProgress&&doc.optInt("progress")>0?" · "+doc.optInt("progress")+"%":"")
                         +(downloading&&!doc.optString("speedHuman").isEmpty()?" · "+doc.optString("speedHuman"):""));
                     if(cancelUpgrade!=null)cancelUpgrade.setVisibility(
                         "beta".equals(channel)&&downloading?View.VISIBLE:View.GONE);
@@ -375,6 +389,7 @@ public final class HubToolsView extends FrameLayout {
                         mutating=false;
                         ui.postDelayed(()->{if(active)load(true);},20000);
                     }else if(failed){mutating=false;
+                        if(noPackage)ui.postDelayed(()->{if(active)load(true);},2000);
                     }else watchUpgrade(g,owner,pid,serial,attempt+1,channel);
                 });
             }catch(Exception error){ui.post(()->{if(!upgradeCurrent(g,owner,pid,serial))return;

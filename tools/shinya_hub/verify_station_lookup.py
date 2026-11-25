@@ -19,7 +19,11 @@ def check_frame(reader, fid):
     locals_count = max(registers, default=-1) + 1
     outgoing = max((int(ins.inst.name[4:]) for ins in instructions
                     if ins.inst.name in ('Call1', 'Call2', 'Call3', 'Call4')), default=0)
-    required = locals_count + (6 + outgoing if outgoing else 0)
+    implicit=any(ins.inst.name in ('Call','CallLong','Construct','ConstructLong') for ins in instructions)
+    # Mov destinations used for implicit outgoing arguments already include
+    # the frame's reserved call area. Counting them again as locals then
+    # adding another header inflated valid frames and broke Construct.
+    required = locals_count if implicit else locals_count + (6 + outgoing if outgoing else 0)
     assert header.frameSize >= required, (fid, 'frame too small', header.frameSize, required)
     return {'frameSize': header.frameSize, 'required': required}
 

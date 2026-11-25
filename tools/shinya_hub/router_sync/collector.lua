@@ -6,6 +6,7 @@ local function file(path)
 end
 local config = assert(json.decode(file(configPath)))
 local ratesOk, wifiRates = pcall(dofile, '/etc/shinya-agent/wifi_rates.lua')
+local temperatureOk, temperature = pcall(dofile, '/etc/shinya-agent/temperature.lua')
 assert(type(config.sn)=='string' and config.sn:match('^[%w_-]+$'))
 local runId = file('/proc/sys/kernel/random/boot_id'):gsub('%s','')..':'..
               file('/proc/sys/kernel/random/uuid'):gsub('%s','')
@@ -49,6 +50,9 @@ repeat
       if item[1]=='user_list' and ratesOk then
         -- A failed supplement must not discard the native terminal snapshot.
         pcall(wifiRates.enrich,value,config.sn)
+      end
+      if item[1]=='overview' and temperatureOk then
+        pcall(temperature.enrich,value,config.sn)
       end
       resources[#resources+1]={module=item[1],value=value,observedAt=os.time()}
       nextDue[item[1]]=os.time()+(item[3] or math.max(5,tonumber(config.interval) or 5))

@@ -130,7 +130,7 @@ def station_metrics(store,tenant,project,now=None):
     return result
 
 
-def speed(store,tenant,project,sn,now=None):
+def speed(store,tenant,project,sn,now=None, *, logarithmic=False):
     now=time.time() if now is None else now
     start,end=bounds(now)
     with store.connect() as db:
@@ -159,20 +159,39 @@ def speed(store,tenant,project,sn,now=None):
     length=slots[-1]+1 if slots else 0
     rx=[None]*length;tx=[None]*length
     for i,down,up in zip(slots,download,upload):rx[i]=down;tx[i]=up
+    maximum=max((value/1024 for value in download+upload),default=0)
+    axis_scale=10**math.ceil(math.log10(max(maximum,0.001)/9999))
+    axis_unit='Mbps' if maximum>=1 else 'Kbps'
+    axis_factor=1 if axis_unit=='Mbps' else 1024
+    def tick(value):
+        if value==0:return '0'
+        digits=0 if value>=1000 else 1 if value>=100 else 2 if value>=1 else 3
+        result=f'{value:.{digits}f}'
+        return result.rstrip('0').rstrip('.') if '.' in result else result
+    ticks=[tick(axis_scale*(10**level-1)*axis_factor) for level in range(5)]
     groups=[]
     for i in slots:
         if not groups or i != groups[-1][-1]+1:groups.append([])
         groups[-1].append(i)
     datasets=[]
     for field,label,color in [(rx,'下载速率',0xFF6796FC),(tx,'上传速率',0xFF14C9C9)]:
+        # Match the official speed view: a lightly smoothed line, with a
+        # restrained download area. Keep uploads as a line so both fills do
+        # not merge into a solid band at the baseline. Gaps remain separate
+        # datasets above, so smoothing never fabricates traffic across them.
+        is_download = field is rx
         for group in groups:
-            datasets.append({'values':[{'x':i,'y':field[i]} for i in group],
+            datasets.append({'values':[{'x':i,'y':(math.log10(1+field[i]/1024/axis_scale)
+                                                   if logarithmic else field[i]/1024)} for i in group],
                 'label':label,'config':{'color':color-2**32,'fillColor':color-2**32,
-                    'drawValues':False,'drawFilled':True,'drawCircles':len(group)==1,'lineWidth':1}})
+                    'drawValues':False,'drawFilled':is_download,'fillAlpha':38,
+                    'drawCircles':len(group)==1,'circleRadius':2.2,
+                    'mode':'CUBIC_BEZIER','drawCubicIntensity':0.10,'lineWidth':1.8}})
     stations=station_metrics(store,tenant,project,now)
     rx_seconds=sum(r['rx_seconds'] for r in stations.values());tx_seconds=sum(r['tx_seconds'] for r in stations.values())
     traffic=traffic_summary(store,tenant,project,now)
     return {'rxRateList':rx,'txRateList':tx,'data':{'dataSets':datasets},
+            **({'yTicks':ticks,'yAxisUnit':axis_unit} if logarithmic else {}),
             'lastHourRx':round(recent_down/seconds/1_000_000,2) if seconds else None,
             'lastHourTx':round(recent_up/seconds/1_000_000,2) if seconds else None,
             'timeList':[datetime.fromtimestamp(start+i*300,CHINA).strftime('%H:%M') for i in range(length)],

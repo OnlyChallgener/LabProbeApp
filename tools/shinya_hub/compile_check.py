@@ -7,12 +7,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SDK = Path('D:/Tools/labprobe-ui/android-sdk')
 JAVA = Path('D:/Program Files/Eclipse Adoptium/jdk-17.0.19.10-hotspot/bin')
-CACHE = Path('C:/Users/admin/.gradle/caches/modules-2/files-2.1')
+CACHE = Path(os.environ.get('SHINYA_JAVA_CACHE', 'C:/Users/admin/.gradle/caches/modules-2/files-2.1'))
 SOURCE = ROOT / 'tools/shinya_hub'
 
 def jar(pattern):
@@ -34,9 +35,12 @@ libraries = [android, jar('com.squareup.okhttp3/okhttp/4.12.0/*/*.jar'),
 # The same file list build_internal.py compiles, so a stale sibling cannot pass here.
 files = ('HubInterceptor.java', 'CachedHubResponses.java', 'HubToolSession.java', 'HubSnapshotKey.java',
          'HubTxtRecord.java', 'HubDns.java', 'HubToolsView.java', 'HubToolsViewManager.java',
-         'HubAuthView.java', 'HubAuthViewManager.java', 'HubDialog.java', 'HubDiagnosisModule.java',
-         'HubStationModule.java', 'HubPages.java', 'HubProjectPages.java', 'HubPenetrationActivity.java',
-         'HubDiagnosisView.java', 'HubDiagnosisViewManager.java')
+         'HubAuthView.java', 'HubAuthViewManager.java', 'HubDialog.java', 'HubMaccDialog.java', 'HubCoverageSettings.java',
+         'HubCoverageViewManager.java', 'HubDiagnosisModule.java',
+         'HubStationModule.java', 'HubPages.java','HubOfficialFloor.java','HubNotifySettings.java', 'HubProjectPages.java', 'HubPenetrationActivity.java',
+         'HubDiagnosisView.java', 'HubDiagnosisViewManager.java', 'HubAssistantFeaturesPage.java',
+         'HubAssistantNotifications.java','HubNotificationReceiver.java', 'HubAssistantNotificationService.java', 'HubSpeedLoadingViewManager.java',
+         'HubAssistantMessageStore.java', 'HubAssistantNoticeMerge.java')
 
 work = Path(tempfile.mkdtemp(prefix='shinya-javac-'))
 try:

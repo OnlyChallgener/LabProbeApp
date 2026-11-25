@@ -34,6 +34,11 @@ class BridgeVM(VM):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--bundle',type=Path,required=True);a=p.parse_args()
     r=load(a.bundle.read_bytes())
+    from patch_assistant_bridge import BANNER_CACHE_SID
+    from hermes_dec.parsers.hbc_bytecode_parser import parse_hbc_bytecode
+    account_literals=[r.strings[i.arg2] for i in parse_hbc_bytecode(r.function_headers[27915],r) if i.inst.name=='LoadConstString']
+    assert 'HubAccountSurface' in account_literals, 'account surface identifier was overwritten'
+    assert r.strings[BANNER_CACHE_SID] != 'HubAccountSurface', 'assistant and account cache identifiers collide'
     for fid in (35710,35717,23461,23465,23460,23459):
         check_frame(r,fid);check_read_caches(r,fid)
     assert r.function_headers[35710].environmentSize >= 5
@@ -48,12 +53,12 @@ def main():
     assert delay==20
     timer.call(None,[])
     assert vm.opened==[socket]
-    interval_id,(poll,poll_delay)=next((k,v) for k,v in vm.timers.items() if v[1]==1000)
-    assert poll_delay==1000
+    interval_id,(poll,poll_delay)=next((k,v) for k,v in vm.timers.items() if v[1]==100)
+    assert poll_delay==100
     poll.call(None,[])
     assert not vm.pending, 'poll before a scoped user payload must be idle'
-    socket['send'].call(socket,['{"requestMessageType":"init"}'])
-    assert len(vm.pending)==1 and vm.pending[0][0]=='{"requestMessageType":"init"}'
+    socket['send'].call(socket,['{"requestMessageType":"init","projectId":"project-a"}'])
+    assert len(vm.pending)==1 and json.loads(vm.pending[0][0])['projectId']=='project-a'
     callback=vm.pending[0][1]
     callback.call(None,[''])
     assert not vm.events
@@ -65,12 +70,15 @@ def main():
     assert json.loads(vm.pending[-1][0])['requestMessageType']=='poll'
     socket['close'].call(socket,[])
     assert interval_id not in vm.timers
+    assert len(vm.pending)==3 and json.loads(vm.pending[-1][0])['requestMessageType']=='close'
+    assert json.loads(vm.pending[-1][0])['projectId']=='project-a'
+    vm.pending[-1][1].call(None,[json.dumps(events)])
     callback.call(None,[json.dumps(events)])
     socket['send'].call(socket,['ignored after close'])
-    assert len(vm.pending)==2 and len(vm.events)==2
+    assert len(vm.pending)==3 and len(vm.events)==2
     second=vm.run(35710,hook)
     second['send'].call(second,['new session'])
-    assert len(vm.pending)==3
+    assert len(vm.pending)==4
     vm.pending[-1][1].call(None,[json.dumps(events[:1])])
     assert len(vm.events)==3 and vm.events[-1][0] is not vm.events[0][0]
     source=load((Path(__file__).resolve().parents[2]/'test/_analysis/oct08-shinya-hub/index.android.bundle').read_bytes())

@@ -9,8 +9,8 @@ from trim_retired_native import trim
 
 OLD_PACKAGE = "cn.com.ruijie.shinya2"
 NEW_PACKAGE = "com.labprobe.shinyahub"
-VERSION_NAME = "1.2.5-hub.62-dev"
-VERSION_CODE = 183249973
+VERSION_NAME = "1.2.5-hub.71-dev"
+VERSION_CODE = 183249982
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 
 

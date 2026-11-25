@@ -11,6 +11,7 @@ import org.json.*;
 /** One cancellable receiver per live React process. No Service, alarm or boot start. */
 final class HubNotificationReceiver {
     static final String EXTRA="com.labprobe.shinyahub.REMINDER_RECORD";
+    private static final String EXTRA_SUMMARY="com.labprobe.shinyahub.REMINDER_SUMMARY";
     private final ReactApplicationContext context;
     private final HubAssistantMessageStore store;
     private final ScheduledExecutorService io=Executors.newSingleThreadScheduledExecutor();
@@ -65,7 +66,15 @@ final class HubNotificationReceiver {
                 if(pending.length()>0){
                     HubAssistantNotifications.channels(context);
                     if(HubAssistantNotifications.permitted(context)){
-                        if(run.catchingUp)post(owner,pending,true,id);
+                        if(run.catchingUp){
+                            LinkedHashMap<String,JSONArray> perDevice=new LinkedHashMap<>();
+                            for(int i=0;i<pending.length();i++){
+                                JSONObject event=pending.getJSONObject(i);
+                                String key=event.optString("projectId")+"/"+event.optString("sn")+"/"+event.optString("deviceId");
+                                JSONArray group=perDevice.get(key);if(group==null){group=new JSONArray();perDevice.put(key,group);}group.put(event);
+                            }
+                            for(JSONArray group:perDevice.values())post(owner,group,true,id);
+                        }
                         else for(int i=0;i<pending.length();i++)post(owner,new JSONArray().put(pending.getJSONObject(i)),false,id);
                     }else run.catchingUp=true;
                 }
@@ -83,16 +92,16 @@ final class HubNotificationReceiver {
         if(!current(id,owner)||!HubAssistantNotifications.permitted(context))return;
         String scope=HubAssistantNotifications.owner(owner),nonce=store.noticeClick(scope,records);
         Intent open=new Intent();open.setClassName(context.getPackageName(),"cn.com.ruijie.shinya2.MainActivity");open.setAction(context.getPackageName()+".REMINDER."+nonce);
-        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);open.putExtra(EXTRA,nonce);
+        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_CLEAR_TOP|Intent.FLAG_ACTIVITY_SINGLE_TOP);open.putExtra(EXTRA,nonce);open.putExtra(EXTRA_SUMMARY,summary);
         PendingIntent click=PendingIntent.getActivity(context,0,open,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
         JSONObject event=records.getJSONObject(0);String title=summary?"用网提醒汇总":event.optString("title");
         java.text.SimpleDateFormat format=new java.text.SimpleDateFormat("MM-dd HH:mm",Locale.CHINA);format.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));
         long at=event.optLong("accessTime",0);if(at<=0)at=event.optLong("triggeredAt",event.optLong("createTime"));
-        String body=summary?"新增 "+records.length()+" 条提醒，点击查看":event.optString("deviceName")+" · "+format.format(new Date(at))+"\n"+event.optString("content");
+        String body=summary?event.optString("deviceName")+" · 新增 "+records.length()+" 条提醒，点击查看":event.optString("deviceName")+" · "+format.format(new Date(at))+"\n"+event.optString("content");
         Notification notice=HubAssistantNotifications.builder(context,HubAssistantNotifications.CHANNEL).setContentTitle(title).setContentText(body)
             .setStyle(new Notification.BigTextStyle().bigText(body)).setWhen(event.optLong("createTime")).setAutoCancel(true).setContentIntent(click).build();
         if(!current(id,owner))return;
-        HubAssistantNotifications.manager(context).notify("hub-reminder:"+scope+":"+(summary?"summary":event.optString("eventKey")),0,notice);
+        HubAssistantNotifications.manager(context).notify("hub-reminder:"+scope+":"+(summary?"summary:"+event.optString("projectId")+":"+event.optString("sn")+":"+event.optString("deviceId"):event.optString("eventKey")),0,notice);
         store.deliveredNotices(scope,records); // Never mark delivered before the notification call succeeds.
         android.util.Log.i("HubReminderReceiver",summary?"Catch-up summary posted":"Reminder posted");
     }
@@ -100,6 +109,7 @@ final class HubNotificationReceiver {
         if(intent==null||pages==null||closed)return;String nonce=intent.getStringExtra(EXTRA);
         if(nonce==null||!nonce.matches("[0-9a-fA-F-]{36}")||nonce.equals(opening))return;
         final HubToolSession owner;try{owner=HubAssistantNotifications.selected();}catch(Exception needsLogin){return;}
+        final boolean summary=intent.getBooleanExtra(EXTRA_SUMMARY,false);
         opening=nonce;long id=generation;
         try{navigation.execute(()->{
             try{JSONArray events=store.noticeTarget(HubAssistantNotifications.owner(owner),nonce,cutoff());
@@ -108,6 +118,8 @@ final class HubNotificationReceiver {
                 for(int i=0;i<events.length();i++){JSONObject e=events.getJSONObject(i);String key=e.optString("projectId")+"/"+e.optString("sn")+"/"+e.optString("deviceId");if(!devices.containsKey(key))devices.put(key,e);}
                 main.post(()->{opening="";if(!current(id,owner))return;Activity a=context.getCurrentActivity();if(a==null||a.isFinishing())return;
                     intent.removeExtra(EXTRA);
+                    intent.removeExtra(EXTRA_SUMMARY);
+                    if(!summary){open(owner,events.optJSONObject(0),id);return;}
                     if(devices.size()==1)open(owner,devices.values().iterator().next(),id);
                     else{String[] labels=new String[devices.size()];JSONObject[] targets=devices.values().toArray(new JSONObject[0]);for(int i=0;i<labels.length;i++)labels[i]=targets[i].optString("projectName","项目")+" · "+targets[i].optString("deviceName");
                         new AlertDialog.Builder(a).setTitle("选择项目与设备").setItems(labels,(dialog,which)->open(owner,targets[which],id)).setNegativeButton("取消",null).show();}

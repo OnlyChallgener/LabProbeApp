@@ -71,7 +71,7 @@ def install(family,credentials,ca):
         if native.get('serial_num')!=sn:raise ValueError('SSH endpoint is a different router')
         official=json.loads(run(c,"ubus -t 3 call shinya_mqlink status '{}'"))['status']
         run(c,'mkdir -p /etc/shinya-agent/client')
-        for source,dest,mode in [('collector.lua','/etc/shinya-agent/collector.lua','600'),('wifi_rates.lua','/etc/shinya-agent/wifi_rates.lua','600'),('publish.sh','/etc/shinya-agent/publish.sh','700'),('init.sh','/etc/init.d/shinya-agent','755')]:
+        for source,dest,mode in [('collector.lua','/etc/shinya-agent/collector.lua','600'),('temperature.lua','/etc/shinya-agent/temperature.lua','600'),('wifi_rates.lua','/etc/shinya-agent/wifi_rates.lua','600'),('publish.sh','/etc/shinya-agent/publish.sh','700'),('init.sh','/etc/init.d/shinya-agent','755')]:
             write(c,dest,(SRC/source).read_bytes(),mode=mode)
         write(c,'/etc/shinya-agent/config.json',json.dumps({'sn':sn,'interval':5,'outputPath':'/tmp/shinya-agent/latest.json'}).encode(),mode='600')
         write(c,'/etc/shinya-agent/sn',sn.encode(),mode='600')

@@ -36,11 +36,17 @@ def main():
     assert len(old) == len(new), 'String-pool resize requires a full build'
     bundle = work / 'bundle-update.hbc'
     patch(ANALYSIS / 'index.android.bundle', bundle)
+    if not __import__('os').environ.get('SHINYA_DISABLE_PATCHES','').strip():
+        from assistant_runtime_gates import verify as verify_assistant_runtime
+        verify_assistant_runtime(bundle)
     subprocess.run([sys.executable,str(ROOT / 'tools/shinya_hub/verify_identity_table.py'),str(bundle)],check=True)
     unsigned = work / 'unsigned-bundle-update.apk'
     brand_assets={'assets/'+folder+'/'+p.name:p.read_bytes()
                   for folder in ('hub-brandicons','hub-appicons')
                   for p in (ROOT / 'tools/shinya_hub/assets'/folder).glob('*.png')}
+    other_icon=ROOT/'tools/shinya_hub/assets/hub-brandicons/device_other_centered.png'
+    if other_icon.exists():
+        brand_assets['res/drawable-mdpi/src_assets_image_common_icon_statype_other.png']=other_icon.read_bytes()
     appicon_manifest=ROOT/'tools/shinya_hub/assets/hub-appicons/manifest.json'
     brand_assets['assets/hub-appicons/manifest.json']=appicon_manifest.read_bytes()
     # H5 pages are packaged assets too. Bundle iterations must carry reviewed
@@ -69,8 +75,11 @@ def main():
                     '--java-bin', str(JAVA), '--apksig', str(jar('com.android.tools.build/apksig/9.2.0/*/*.jar')),
                     '--classes', str(ANALYSIS / 'sign-classes')], check=True)
     subprocess.run([str(aligner),'-c','-P','16','4',str(signed)],check=True)
+    from assistant_runtime_gates import verify_services
+    verify_services(signed)
     result = {'stage': 'built-for-validation', 'apk': str(signed), 'abi': args.abi,
               'versionName': release['versionName'], 'versionCode': release['versionCode'],
+              'assistantRuntimeGatesPassed':not bool(__import__('os').environ.get('SHINYA_DISABLE_PATCHES','').strip()),
               'bytes': signed.stat().st_size, 'sha256': hashlib.sha256(signed.read_bytes()).hexdigest(),
               'appUiVerified': False, 'fullFunctionalityVerified': False}
     (work / 'build-result.json').write_text(json.dumps(result, indent=2), encoding='utf8')
