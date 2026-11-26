@@ -308,7 +308,7 @@ internal fun speedTestInterfaceOptions(
         ?.distinct()
         .orEmpty()
     val available = if (unified.isNotEmpty() || inventory != null) {
-        unified.sortedWith(compareBy({ if (it == "wan") 0 else 1 }, { it }))
+        unified.sortedWith(WAN_ID_ORDER)
     } else {
         ports.filter { it.wan && it.testable }
             .mapNotNull { port ->
@@ -316,7 +316,7 @@ internal fun speedTestInterfaceOptions(
                 name.takeIf { SpeedWanName.matches(it) }
             }
             .distinct()
-            .sortedWith(compareBy({ if (it == "wan") 0 else 1 }, { it }))
+            .sortedWith(WAN_ID_ORDER)
     }
     if (available.isEmpty()) return emptyList()
     val singles = available.map { SpeedTestInterfaceOption(it, speedTestInterfaceLabel(it), listOf(it)) }
@@ -336,8 +336,6 @@ internal fun speedTestSelection(
 ): List<String> {
     val options = speedTestInterfaceOptions(ports, inventory)
     options.firstOrNull { it.id == selected }?.let { return it.interfaces }
-    inventory?.wans?.firstOrNull { it.defaultEgress && it.selectable && it.supports("speedtest") }
-        ?.logicalInterface?.let { default -> options.firstOrNull { it.id == default }?.interfaces?.let { return it } }
     // WAN remains the default when present; the first live WAN is the fallback
     // for single-WAN routers whose interface has a different suffix.
     return options.firstOrNull { it.id == "wan" }?.interfaces

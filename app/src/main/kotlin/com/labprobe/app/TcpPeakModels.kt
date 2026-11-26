@@ -23,6 +23,17 @@ internal fun normalizeTcpPeakWanId(value: String): String =
 internal fun isValidTcpPeakWanId(value: String): Boolean =
     TCP_PEAK_WAN_ID_PATTERN.matches(normalizeTcpPeakWanId(value))
 
+internal fun tcpPeakTaskPath(wanId: String, taskId: String): String {
+    val query = buildList {
+        if (wanId.isNotBlank()) add("wanId=${java.net.URLEncoder.encode(normalizeTcpPeakWanId(wanId), "UTF-8")}")
+        if (taskId.isNotBlank()) add("taskId=${java.net.URLEncoder.encode(taskId.trim(), "UTF-8")}")
+    }.joinToString("&")
+    return if (query.isEmpty()) "/api/tcp-session-test" else "/api/tcp-session-test?$query"
+}
+
+internal fun tcpPeakStopBody(wanId: String, taskId: String): JSONObject =
+    JSONObject().put("wanId", normalizeTcpPeakWanId(wanId)).put("taskId", taskId.trim())
+
 data class TcpPeakConfig(
     val side: TcpPeakSide = TcpPeakSide.APP,
     val host: String = "",
@@ -87,48 +98,53 @@ internal fun tcpPeakWanSelectionState(
     wans: List<WanInfo>,
 ): TcpPeakWanSelectionState {
     if (side != TcpPeakSide.RELAY) return TcpPeakWanSelectionState("", emptyList(), false)
-    val configuredWans = wans
-        .filter { it.configured && isValidTcpPeakWanId(it.wanId) }
+    val selectableWans = wans
+        .filter { it.selectable && isValidTcpPeakWanId(it.wanId) }
         .map { it.copy(wanId = normalizeTcpPeakWanId(it.wanId)) }
         .distinctBy(WanInfo::wanId)
+        .sortedForWanDisplay()
     val normalizedCurrent = normalizeTcpPeakWanId(currentWanId)
         .takeIf { isValidTcpPeakWanId(it) }
         .orEmpty()
-    if (configuredWans.isEmpty()) {
+    if (selectableWans.isEmpty()) {
         return TcpPeakWanSelectionState(
             selectedWanId = normalizedCurrent,
             options = emptyList(),
             showSelector = false,
         )
     }
-    val selectedWanId = configuredWans.firstOrNull { it.wanId == normalizedCurrent }?.wanId
-        ?: normalizedCurrent.ifEmpty {
-            configuredWans.firstOrNull { it.defaultEgress }?.wanId
-                ?: configuredWans.first().wanId
-        }
-    val options = if (normalizedCurrent.isNotEmpty() && configuredWans.none { it.wanId == normalizedCurrent }) {
-        configuredWans + WanInfo(
-            wanId = normalizedCurrent,
-            displayName = normalizedCurrent.uppercase(Locale.ROOT),
-            configured = true,
-        )
-    } else {
-        configuredWans
-    }
+    val selectedWanId = selectableWans.firstOrNull { it.wanId == normalizedCurrent }?.wanId
+        ?: normalizedCurrent.ifEmpty { selectableWans.first().wanId }
     return TcpPeakWanSelectionState(
         selectedWanId = selectedWanId,
-        options = options,
-        showSelector = options.size > 1,
+        options = selectableWans,
+        showSelector = selectableWans.size > 1,
     )
 }
 
-internal fun tcpPeakUsesLegacyDefault(inventory: WanInventory?, wanId: String): Boolean =
-    inventory?.multiWanConfigured != true &&
-        inventory?.wans.orEmpty().count { it.configured } <= 1 &&
-        (wanId.isBlank() || normalizeTcpPeakWanId(wanId) == "wan")
+internal fun tcpPeakUsesLegacyDefault(inventory: WanInventory?, wanId: String): Boolean {
+    if (inventory == null || inventory.wans.isEmpty()) {
+        val normalizedWanId = normalizeTcpPeakWanId(wanId)
+        return normalizedWanId.isBlank() || normalizedWanId == "wan"
+    }
+    val online = inventory.online()
+    val normalizedWanId = normalizeTcpPeakWanId(wanId)
+    return online.size == 1 && online.single().wanId.equals("wan", true) &&
+        (normalizedWanId.isBlank() || normalizedWanId == "wan")
+}
+
+internal fun tcpPeakRunnableConfig(config: TcpPeakConfig, inventory: WanInventory?): TcpPeakConfig? {
+    if (config.side != TcpPeakSide.RELAY || inventory == null || inventory.wans.isEmpty()) return config
+    val selection = tcpPeakWanSelectionState(config.side, config.wanId, inventory?.wans.orEmpty())
+    val selected = selection.options.firstOrNull { it.wanId.equals(selection.selectedWanId, true) } ?: return null
+    return config.copy(wanId = selected.wanId)
+}
 
 internal fun tcpPeakWanLabel(wanId: String): String =
     wanId.trim().takeIf(String::isNotBlank)?.let { "线路 ${it.uppercase(Locale.ROOT)}" }.orEmpty()
+
+internal fun tcpPeakHistoryShowsWanLabels(inventory: WanInventory?): Boolean =
+    inventory?.multiWanOnline == true
 
 internal fun TcpPeakSnapshot.withRetainedWanId(previousWanId: String): TcpPeakSnapshot =
     if (wanId.isBlank() && previousWanId.isNotBlank()) copy(wanId = previousWanId) else this

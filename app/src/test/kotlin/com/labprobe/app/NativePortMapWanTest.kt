@@ -2,6 +2,8 @@ package com.labprobe.app
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativePortMapWanTest {
@@ -42,5 +44,47 @@ class NativePortMapWanTest {
             ]}
         """.trimIndent()))
         assertEquals(listOf("wan", "all", "wan1"), rules.map { it.wanId })
+    }
+
+    @Test
+    fun singleOnlineWanHidesSelectorAndOfflineBindingOption() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("portMapping" to true)),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = false, capabilities = mapOf("portMapping" to true)),
+            ),
+            configuredCount = 2,
+            onlineCount = 1,
+        )
+        assertEquals(listOf("all", "wan"), nativePortMapLineOptions(inventory))
+        assertFalse(nativePortMapShowsLineSelector(inventory))
+    }
+
+    @Test
+    fun dualOnlineWansShowSelectorWithBothLines() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("portMapping" to true)),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("portMapping" to true)),
+            ),
+            configuredCount = 2,
+            onlineCount = 2,
+        )
+        assertEquals(listOf("all", "wan", "wan1"), nativePortMapLineOptions(inventory))
+        assertTrue(nativePortMapShowsLineSelector(inventory))
+    }
+
+    @Test
+    fun wan1OnlyOnlineHidesPrimaryWanAndSelector() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = false, capabilities = mapOf("portMapping" to true)),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("portMapping" to true)),
+            ),
+            configuredCount = 2,
+            onlineCount = 1,
+        )
+        assertEquals(listOf("all", "wan1"), nativePortMapLineOptions(inventory))
+        assertFalse(nativePortMapShowsLineSelector(inventory))
     }
 }

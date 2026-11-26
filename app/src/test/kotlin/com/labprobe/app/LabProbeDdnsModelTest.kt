@@ -52,10 +52,11 @@ class LabProbeDdnsModelTest {
 
         val inventory = WanInventory(
             wans = listOf(
-                WanInfo(wanId = "wan", configured = true),
-                WanInfo(wanId = "wan1", configured = true),
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true),
             ),
             configuredCount = 2,
+            onlineCount = 2,
         )
         val unsupported = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory, false)
         assertEquals("", unsupported.selectedWanId)
@@ -64,13 +65,14 @@ class LabProbeDdnsModelTest {
     }
 
     @Test
-    fun singleConfiguredWan1IsSelectedAutomaticallyWithoutSelector() {
+    fun singleOnlineWan1IsSelectedAutomaticallyWithoutSelector() {
         val inventory = WanInventory(
             wans = listOf(
-                WanInfo(wanId = "wan", configured = false),
-                WanInfo(wanId = "wan1", configured = true),
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = false),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true),
             ),
-            configuredCount = 1,
+            configuredCount = 2,
+            onlineCount = 1,
         )
 
         val state = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory, true)
@@ -80,31 +82,34 @@ class LabProbeDdnsModelTest {
     }
 
     @Test
-    fun newRecordUsesDefaultEgressAndExistingRecordKeepsItsWan() {
+    fun newRecordAlwaysPrefersWanAndExistingOfflineBindingStaysHidden() {
         val inventory = WanInventory(
             wans = listOf(
-                WanInfo(wanId = "wan", configured = true),
-                WanInfo(wanId = "broadband2", configured = true, defaultEgress = true),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true, defaultEgress = true),
+                WanInfo(wanId = "broadband2", supported = true, configured = true, enabled = true, online = false, defaultEgress = true),
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true),
             ),
-            configuredCount = 2,
+            configuredCount = 3,
+            onlineCount = 2,
         )
 
         val newState = labProbeDdnsWanEditorState(LabProbeDdnsRecord(), inventory, true)
-        assertEquals("broadband2", newState.selectedWanId)
-        assertEquals(listOf("wan", "broadband2"), newState.options)
+        assertEquals("wan", newState.selectedWanId)
+        assertEquals(listOf("wan", "wan1"), newState.options)
         assertTrue(newState.showSelector)
 
-        val existingState = labProbeDdnsWanEditorState(LabProbeDdnsRecord(id = "existing", wanId = "legacy0"), inventory, true)
-        assertEquals("legacy0", existingState.selectedWanId)
-        assertEquals(listOf("wan", "broadband2", "legacy0"), existingState.options)
+        val existingState = labProbeDdnsWanEditorState(LabProbeDdnsRecord(id = "existing", wanId = "broadband2"), inventory, true)
+        assertEquals("broadband2", existingState.selectedWanId)
+        assertEquals(listOf("wan", "wan1"), existingState.options)
         assertTrue(existingState.showSelector)
     }
 
     @Test
-    fun knownSingleWanFillsLegacyEmptyRecordButUnknownHubDoesNotInventWan() {
+    fun knownSingleOnlineWanFillsLegacyEmptyRecordButUnknownHubDoesNotInventWan() {
         val singleWan = WanInventory(
-            wans = listOf(WanInfo(wanId = "wan1", configured = true)),
+            wans = listOf(WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true)),
             configuredCount = 1,
+            onlineCount = 1,
         )
         val legacyRecord = LabProbeDdnsRecord(id = "legacy")
         assertEquals("wan1", labProbeDdnsWanEditorState(legacyRecord, singleWan, true).selectedWanId)
@@ -113,13 +118,15 @@ class LabProbeDdnsModelTest {
     }
 
     @Test
-    fun existingEmptyWanStaysEmptyWhenMultipleConfiguredWansAreAvailable() {
+    fun existingEmptyWanStaysEmptyWhenMultipleOnlineWansAreAvailable() {
         val inventory = WanInventory(
             wans = listOf(
-                WanInfo(wanId = "wan", configured = true, defaultEgress = true),
-                WanInfo(wanId = "wan1", configured = true),
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, defaultEgress = true),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true),
+                WanInfo(wanId = "wan2", supported = true, configured = true, enabled = true, online = false),
             ),
-            configuredCount = 2,
+            configuredCount = 3,
+            onlineCount = 2,
         )
 
         val state = labProbeDdnsWanEditorState(LabProbeDdnsRecord(id = "legacy"), inventory, true)
@@ -142,9 +149,12 @@ class LabProbeDdnsModelTest {
 
     @Test
     fun credentialsAreOnlyAddedWhenTheUserEnteredThem() {
-        val json = LabProbeDdnsRecord(provider = "duckdns", hostname = "home").toJson(mapOf("token" to "new-token"))
+        val json = LabProbeDdnsRecord(
+            id = "existing",
+            provider = "duckdns",
+            hostname = "home.example.com",
+        ).toJson(mapOf("token" to "new-token"))
 
-        assertTrue(json.has("credentials"))
         assertEquals("new-token", json.getJSONObject("credentials").getString("token"))
     }
 
@@ -194,7 +204,7 @@ class LabProbeDdnsModelTest {
         val root = JSONObject().put("records", JSONArray().put(JSONObject()
             .put("id", "r1")
             .put("provider", "duckdns")
-            .put("hostname", "home")
+            .put("hostname", "home.example.com")
             .put("recordTypes", JSONArray().put("A").put("AAAA"))
             .put("status", "public")
             .put("ipv4State", "public")
@@ -238,6 +248,7 @@ class LabProbeDdnsModelTest {
             recordTypes = listOf("TXT"),
             recordValues = mapOf("TXT" to value),
         ).toJson()
+
         assertEquals(value, json.getJSONObject("recordValues").getString("TXT"))
     }
 

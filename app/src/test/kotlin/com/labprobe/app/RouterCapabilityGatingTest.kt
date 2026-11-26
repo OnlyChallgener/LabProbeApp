@@ -36,12 +36,34 @@ class RouterCapabilityGatingTest {
         val inventory = WanInventory(
             wans = listOf(
                 WanInfo(wanId = "wan", supported = true, configured = false, enabled = false, capabilities = mapOf("portMapping" to true, "upnp" to true)),
-                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = false, capabilities = mapOf("portMapping" to true, "upnp" to false)),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("portMapping" to true, "upnp" to false)),
             ),
             supported = true,
             configuredCount = 1,
         )
         assertEquals(listOf("ipv6", "portMapping"), mappingSuitePages(null, inventory))
+    }
+
+    @Test
+    fun allOfflineLinesKeepCapabilitiesWithoutBecomingSelectable() {
+        val inventory = zeroCapabilities.copy(wans = zeroCapabilities.wans.map {
+            it.copy(online = false, capabilities = mapOf("portMapping" to true, "upnp" to false))
+        })
+
+        assertTrue(inventory.supportsLineCapability("portMapping"))
+        assertFalse(inventory.supportsLineCapability("upnp"))
+        assertTrue(inventory.selectable("portMapping").isEmpty())
+        assertEquals(listOf("ipv6", "portMapping"), mappingSuitePages(null, inventory))
+    }
+
+    @Test
+    fun explicitGlobalFalseStillOverridesMissingPerWanCapabilities() {
+        val inventory = WanInventory(
+            wans = listOf(WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true)),
+            supported = true,
+            configuredCount = 1,
+        )
+        assertEquals(listOf("ipv6"), mappingSuitePages(RouterCapabilities(nativePortMapping = false, upnp = false), inventory))
     }
 
     @Test
@@ -68,6 +90,11 @@ class RouterCapabilityGatingTest {
             configuredCount = 2,
         )
         assertEquals(listOf("eth0", "eth1"), firewallWanOptions(inventory, "eth0"))
+        val reordered = inventory.copy(wans = listOf(
+            inventory.wans[1].copy(logicalInterface = "eth1"),
+            inventory.wans[0].copy(logicalInterface = "eth9"),
+        ))
+        assertEquals(listOf("eth9", "eth1"), firewallWanOptions(reordered, "eth9"))
         assertEquals(listOf("wan"), firewallWanOptions(null, "wan"))
         assertEquals(listOf("wan", "legacy0"), firewallWanOptions(null, "legacy0"))
     }

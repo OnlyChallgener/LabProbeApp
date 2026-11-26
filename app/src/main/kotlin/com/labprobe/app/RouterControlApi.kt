@@ -346,9 +346,25 @@ data class WanInfo(
     val capabilities: Map<String, Boolean> = emptyMap(),
     val source: String = "firmware",
 ) {
-    val selectable: Boolean get() = supported && configured && enabled
-    fun supports(capability: String): Boolean = capabilities[capability] == true
+    val configurable: Boolean get() = supported && configured && enabled
+    val selectable: Boolean get() = configurable && online
+    fun supports(capability: String): Boolean = capabilities[capability] != false
 }
+
+internal fun wanOrderRank(wanId: String): Int = when (wanId.trim().lowercase(Locale.ROOT)) {
+    "wan" -> 0
+    "wan1" -> 1
+    else -> 2
+}
+
+internal val WAN_ID_ORDER: Comparator<String> = compareBy(
+    { wanOrderRank(it) },
+    { it.lowercase(Locale.ROOT) },
+)
+
+internal fun List<WanInfo>.sortedForWanDisplay(): List<WanInfo> = sortedWith(
+    compareBy<WanInfo> { wanOrderRank(it.wanId) }.thenBy { it.wanId.lowercase(Locale.ROOT) }
+)
 
 data class WanInventory(
     val wans: List<WanInfo> = emptyList(),
@@ -359,9 +375,14 @@ data class WanInventory(
     val updatedAt: Long = 0L,
 ) {
     val multiWanConfigured: Boolean get() = configuredCount > 1
+    val multiWanOnline: Boolean get() = online().size > 1
     fun find(wanId: String?): WanInfo? = wans.firstOrNull { it.wanId.equals(wanId, true) }
-    fun selectable(capability: String): List<WanInfo> = wans.filter { it.selectable && it.supports(capability) }
-    fun preferred(capability: String): WanInfo? = selectable(capability).firstOrNull { it.defaultEgress } ?: selectable(capability).firstOrNull()
+    fun online(): List<WanInfo> = wans.filter { it.selectable }.sortedForWanDisplay()
+    fun configured(): List<WanInfo> = wans.filter { it.configured }.sortedForWanDisplay()
+    fun supportsLineCapability(capability: String): Boolean =
+        wans.isEmpty() || wans.any { it.configurable && it.supports(capability) }
+    fun selectable(capability: String): List<WanInfo> = online().filter { it.supports(capability) }
+    fun preferred(capability: String): WanInfo? = selectable(capability).firstOrNull()
 }
 
 internal fun parseWanInventory(data: JSONObject): WanInventory {
@@ -381,7 +402,7 @@ internal fun parseWanInventory(data: JSONObject): WanInventory {
             physicalPortId = row.optInt("physicalPortId"),
             physicalPortName = cleanApiText(row.optString("physicalPortName")),
             role = cleanApiText(row.optString("role")),
-            supported = if (row.has("supported")) row.optBoolean("supported") else configured,
+            supported = if (row.has("supported")) row.optBoolean("supported") else true,
             configured = configured,
             enabled = enabled,
             online = if (row.has("online")) row.optBoolean("online") else ipv4.isNotBlank() || ipv6.isNotBlank(),
@@ -483,14 +504,17 @@ data class UpnpState(
 internal fun upnpWanOptions(inventory: WanInventory?, current: String): List<String> {
     if (inventory == null) return (listOf("AUTO", "WAN") + current).filter { it.isNotBlank() }.distinct()
     val available = inventory.selectable("upnp").map { it.wanId.uppercase(Locale.ROOT) }
-    return ((if (available.isNotEmpty()) listOf("AUTO") else emptyList()) + available + current)
+    return ((if (available.isNotEmpty()) listOf("AUTO") else emptyList()) + available)
         .filter { it.isNotBlank() }
         .distinct()
 }
 
+internal fun upnpShowsWanSelector(inventory: WanInventory?): Boolean =
+    inventory == null || inventory.selectable("upnp").size > 1
+
 internal fun firewallWanOptions(inventory: WanInventory?, current: String): List<String> {
     if (inventory == null) return (listOf("wan") + current).filter { it.isNotBlank() }.distinct()
-    return (inventory.wans.filter { it.configured }.map { it.logicalInterface.ifBlank { it.wanId } } + current)
+    return (inventory.configured().map { it.logicalInterface.ifBlank { it.wanId } } + current)
         .filter { it.isNotBlank() }
         .distinct()
 }
@@ -718,7 +742,8 @@ internal fun ddnsEditorUsesModernForm(nativeProtocol: String, nativeDdns: Boolea
 
 internal fun nativeDdnsWanOptions(inventory: WanInventory?, current: String): List<String> {
     if (inventory == null) return (listOf("wan") + current).filter { it.isNotBlank() }.distinct()
-    return (inventory.selectable("nativeDdns").map { it.wanId } + current)
+    return inventory.selectable("nativeDdns")
+        .map { it.wanId }
         .filter { it.isNotBlank() }
         .distinct()
 }
@@ -917,23 +942,18 @@ internal data class LabProbeDdnsWanEditorState(
 )
 
 internal fun labProbeDdnsWanEditorState(record: LabProbeDdnsRecord, inventory: WanInventory?, wanSupported: Boolean): LabProbeDdnsWanEditorState {
-    val configuredWans = if (wanSupported) inventory?.wans.orEmpty().filter { it.configured && it.wanId.isNotBlank() } else emptyList()
+    val selectableWans = if (wanSupported) inventory?.online().orEmpty().filter { it.wanId.isNotBlank() } else emptyList()
     val currentWanId = record.wanId.trim()
     val selectedWanId = when {
         currentWanId.isNotBlank() -> currentWanId
-        configuredWans.size == 1 -> configuredWans.single().wanId
+        selectableWans.size == 1 -> selectableWans.single().wanId
         record.id.isNotBlank() -> ""
-        else -> configuredWans.firstOrNull { it.defaultEgress }?.wanId
-            ?: configuredWans.firstOrNull()?.wanId
-            ?: ""
+        else -> selectableWans.firstOrNull()?.wanId.orEmpty()
     }
-    val options = (configuredWans.map { it.wanId } + selectedWanId)
-        .filter { it.isNotBlank() }
-        .distinct()
     return LabProbeDdnsWanEditorState(
         selectedWanId = selectedWanId,
-        options = options,
-        showSelector = configuredWans.size > 1,
+        options = selectableWans.map { it.wanId }.distinct(),
+        showSelector = selectableWans.size > 1,
     )
 }
 

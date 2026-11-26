@@ -234,14 +234,27 @@ class RouterSpeedTestLogicTest {
         assertEquals(listOf("wan"), speedTestSelection(emptyList(), "both", inventory))
 
         val dual = inventory.copy(
-            wans = inventory.wans.map { it.copy(configured = true, enabled = true, capabilities = mapOf("speedtest" to true)) },
+            wans = inventory.wans.map { it.copy(configured = true, enabled = true, online = true, capabilities = mapOf("speedtest" to true)) },
             configuredCount = 2,
+            onlineCount = 2,
         )
         assertEquals(
             listOf("wan", "wan1", SPEED_TEST_BOTH_INTERFACES),
             speedTestInterfaceOptions(emptyList(), dual).map { it.id },
         )
         assertEquals(listOf("wan", "wan1"), speedTestSelection(emptyList(), SPEED_TEST_BOTH_INTERFACES, dual))
+
+        val secondaryDefault = dual.copy(wans = dual.wans.map {
+            it.copy(defaultEgress = it.wanId == "wan1")
+        })
+        assertEquals(listOf("wan", "wan1", SPEED_TEST_BOTH_INTERFACES), speedTestInterfaceOptions(emptyList(), secondaryDefault).map { it.id })
+        assertEquals(listOf("wan"), speedTestSelection(emptyList(), "missing", secondaryDefault))
+
+        val wan1Only = dual.copy(wans = dual.wans.map {
+            it.copy(online = it.wanId == "wan1")
+        })
+        assertEquals(listOf("wan1"), speedTestInterfaceOptions(emptyList(), wan1Only).map { it.id })
+        assertEquals(listOf("wan1"), speedTestSelection(emptyList(), "both", wan1Only))
     }
 
     @Test

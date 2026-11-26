@@ -6,25 +6,40 @@ import org.junit.Test
 
 class NativeDdnsWanTest {
     @Test
-    fun singleWanOnlyOffersWan() {
+    fun singleOnlineWanOnlyOffersWan() {
         val inventory = WanInventory(
             wans = listOf(
-                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, capabilities = mapOf("nativeDdns" to true)),
-                WanInfo(wanId = "wan1", supported = true, configured = false, enabled = false, capabilities = mapOf("nativeDdns" to false)),
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("nativeDdns" to true)),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = false, capabilities = mapOf("nativeDdns" to true)),
             ),
-            configuredCount = 1,
+            configuredCount = 2,
+            onlineCount = 1,
         )
         assertEquals(listOf("wan"), nativeDdnsWanOptions(inventory, "wan"))
     }
 
     @Test
-    fun configuredOfflineWan1RemainsSelectable() {
+    fun configuredOfflineWan1IsNotSelectable() {
         val inventory = WanInventory(
             wans = listOf(
-                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, capabilities = mapOf("nativeDdns" to true)),
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("nativeDdns" to true)),
                 WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = false, capabilities = mapOf("nativeDdns" to true)),
             ),
             configuredCount = 2,
+            onlineCount = 1,
+        )
+        assertEquals(listOf("wan"), nativeDdnsWanOptions(inventory, "wan"))
+    }
+
+    @Test
+    fun dualOnlineWansOfferBothLines() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("nativeDdns" to true)),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("nativeDdns" to true)),
+            ),
+            configuredCount = 2,
+            onlineCount = 2,
         )
         assertEquals(listOf("wan", "wan1"), nativeDdnsWanOptions(inventory, "wan"))
     }
@@ -32,23 +47,25 @@ class NativeDdnsWanTest {
     @Test
     fun knownZeroCapabilityDoesNotInventWan() {
         val inventory = WanInventory(
-            wans = listOf(WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, capabilities = mapOf("nativeDdns" to false))),
+            wans = listOf(WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("nativeDdns" to false))),
             configuredCount = 1,
+            onlineCount = 1,
         )
         assertEquals(emptyList<String>(), nativeDdnsWanOptions(inventory, ""))
     }
 
     @Test
-    fun arbitraryWanIdentityAndDefaultEgressArePreserved() {
+    fun preferredAndOptionsIgnoreOfflineDefaultEgressWithoutMigratingBinding() {
         val inventory = WanInventory(
             wans = listOf(
-                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, capabilities = mapOf("nativeDdns" to true)),
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("nativeDdns" to true)),
                 WanInfo(wanId = "broadband2", displayName = "WAN1", supported = true, configured = true, enabled = true, online = false, defaultEgress = true, capabilities = mapOf("nativeDdns" to true)),
             ),
             configuredCount = 2,
+            onlineCount = 1,
         )
-        assertEquals("broadband2", inventory.preferred("nativeDdns")?.wanId)
-        assertEquals(listOf("wan", "broadband2"), nativeDdnsWanOptions(inventory, "wan"))
+        assertEquals("wan", inventory.preferred("nativeDdns")?.wanId)
+        assertEquals(listOf("wan"), nativeDdnsWanOptions(inventory, "broadband2"))
     }
 
     @Test

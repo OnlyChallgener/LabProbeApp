@@ -34,13 +34,20 @@ fun mergeRouterDashboardSnapshot(previous: JSONObject?, latest: JSONObject?): JS
     if (latest == null || latest.length() == 0) return previous
     if (previous == null || previous.length() == 0) return JSONObject(latest.toString())
 
-    val merged = JSONObject(previous.toString())
-    mergeRouterObject(merged, latest)
     val previousSample = dashboardRealtimeSample(previous)
     val latestSample = dashboardRealtimeSample(latest)
+    val previousIsNewer = previousSample.optLong("sampleEpochMs") > latestSample.optLong("sampleEpochMs")
+    val previousWans = if (previousIsNewer) {
+        previous.optJSONArray("wans")?.let { JSONArray(it.toString()) }
+    } else {
+        null
+    }
+    val merged = JSONObject(previous.toString())
+    mergeRouterObject(merged, latest)
     // Slow eWeb responses may finish after a new realtime frame. Merge their
-    // identity/details without rolling the current measured values backwards.
-    if (previousSample.optLong("sampleEpochMs") > latestSample.optLong("sampleEpochMs")) {
+    // identity/details without rolling the current measurements or WAN inventory backwards.
+    if (previousIsNewer) {
+        if (previousWans == null) merged.remove("wans") else merged.put("wans", previousWans)
         clearDashboardMeasurements(merged)
         return mergeLiteRouterRealtime(merged, previousSample)
     }

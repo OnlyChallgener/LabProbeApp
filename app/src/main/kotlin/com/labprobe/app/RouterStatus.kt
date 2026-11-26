@@ -1263,7 +1263,9 @@ internal fun RouterNetworkCard(ui: RouterDashboardUi, rawWans: Map<String, Route
     var expandedWanId by rememberSaveable { mutableStateOf<String?>(null) }
     var lanExpanded by rememberSaveable { mutableStateOf(false) }
     var apExpanded by rememberSaveable { mutableStateOf(false) }
-    val configuredWans = ui.wans.filter { it.configured }.sortedBy { if (it.wanId == "wan") 0 else 1 }
+    val configuredWans = ui.wans.filter { it.configured }.sortedWith(
+        compareBy<RouterWanUi> { wanOrderRank(it.wanId) }.thenBy { it.wanId }
+    )
     val context = LocalContext.current
     RouterGlassCard {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

@@ -205,13 +205,18 @@ internal fun stunWanVerified(expected: String, reported: String, verification: S
     return verification.isBlank() || verification.equals("verified", true)
 }
 
-internal fun stunWanOptions(configured: List<WanInfo>, current: String): List<String> =
-    (configured.filter { it.configured }.map { normalizedStunWan(it.wanId) } + normalizedStunWan(current))
-        .distinct().sortedWith(compareBy({ it != "wan" }, { it }))
+internal fun stunWanOptions(wans: List<WanInfo>): List<String> =
+    wans.filter { it.selectable }
+        .sortedForWanDisplay()
+        .map { normalizedStunWan(it.wanId) }
+        .filter { it.isNotBlank() }
+        .distinct()
 
-internal fun stunWanSelectable(id: String, available: Set<String>): Boolean =
-    normalizedStunWan(id) == "wan" || normalizedStunWan(id) in available
+internal fun newStunDraft(inventory: WanInventory?): StunDraft =
+    StunDraft(wanId = inventory?.preferred("stun")?.wanId ?: "wan")
 
+internal fun stunHistoryShowsWanLabels(inventory: WanInventory?): Boolean =
+    inventory?.multiWanOnline == true
 
 /** 顶部五分类筛选：HTTP/HTTPS/SSH 按应用层协议精确区分，其余全部归入 MORE。 */
 internal enum class StunProtocolFilter(val label: String) {
@@ -835,7 +840,7 @@ fun StunPenetrationScreen(
                     scope.launch { refresh(true) }
                 } else {
                     editorError = ""
-                    editor = StunDraft()
+                    editor = newStunDraft(wanResource.value)
                 }
             },
         )
@@ -862,7 +867,7 @@ fun StunPenetrationScreen(
                     acknowledgedOperationVersion = operationState?.completedVersion ?: 0L
                     error = ""
                     editorError = ""
-                    editor = previousDraft ?: StunDraft()
+                    editor = previousDraft ?: newStunDraft(wanResource.value)
                 }) { Text("已核对列表，重新填写", style = LabTypography.CompactButton) }
             }
         }
@@ -924,7 +929,7 @@ fun StunPenetrationScreen(
                     scope.launch { refresh(true) }
                 } else {
                     editorError = ""
-                    editor = StunDraft()
+                    editor = newStunDraft(wanResource.value)
                 }
             }
         } else if (!loading && !snapshot.rulesLoaded && snapshot.rules.isEmpty()) {
@@ -935,7 +940,7 @@ fun StunPenetrationScreen(
             visibleRules.forEach { rule ->
                 StunRuleCard(
                     rule = rule,
-                    showWan = wanResource.value?.multiWanConfigured == true || normalizedStunWan(rule.wanId) != "wan",
+                    showWan = wanResource.value?.multiWanOnline == true,
                     agentOnline = snapshot.agentOnline,
                     wireGuardManaged = isWireGuardManagedStunRule(
                         rule.id,
@@ -1003,15 +1008,12 @@ fun StunPenetrationScreen(
         StunEditorDialog(
             initial = draft,
             prefs = prefs,
-            wanOptions = stunWanOptions(wanResource.value?.wans.orEmpty(), draft.wanId),
-            availableWanIds = snapshot.availableWanIds,
+            wanOptions = stunWanOptions(wanResource.value?.wans.orEmpty()),
             error = editorError,
             saving = editorSaving,
             onDismiss = { if (!editorSaving) { editor = null; editorError = "" } },
         ) { saved ->
-            val old = snapshot.rules.firstOrNull { it.id == saved.id }
-            val lineChanged = old == null || normalizedStunWan(old.wanId) != normalizedStunWan(saved.wanId) || (!old.enabled && saved.enabled)
-            val validationError = stunDraftValidationError(saved) ?: if (saved.enabled && lineChanged && !stunWanSelectable(saved.wanId, snapshot.availableWanIds)) "所选线路暂不可用" else null
+            val validationError = stunDraftValidationError(saved)
             if (validationError != null) {
                 editorError = validationError
             } else {
@@ -1077,7 +1079,7 @@ fun StunPenetrationScreen(
             }
         }
     }
-    historyTarget?.let { rule -> StunAddressHistoryDialog(rule, history, showWan = wanResource.value?.multiWanConfigured == true || normalizedStunWan(rule.wanId) != "wan" || history.any { it.wanId.isNotBlank() && normalizedStunWan(it.wanId) != "wan" }, onDismiss = { historyTarget = null }, onCopy = { copyStunAddress(context, rule.serviceType, it) }) }
+    historyTarget?.let { rule -> StunAddressHistoryDialog(rule, history, showWan = stunHistoryShowsWanLabels(wanResource.value), onDismiss = { historyTarget = null }, onCopy = { copyStunAddress(context, rule.serviceType, it) }) }
     residualConfirmation?.let { pending ->
         AlertDialog(
             onDismissRequest = {
@@ -1650,10 +1652,16 @@ fun StunPenetrationScreen(
     }
 }
 
-@Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, wanOptions: List<String>, availableWanIds: Set<String>, error: String, saving: Boolean, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
+@Composable private fun StunEditorDialog(initial: StunDraft, prefs: AppPrefs, wanOptions: List<String>, error: String, saving: Boolean, onDismiss: () -> Unit, onSave: (StunDraft) -> Unit) {
     val mappingCache = remember(prefs.hub, prefs.token) { PortMappingMemoryCache.forScope(prefs.hub, prefs.token) }
     val deviceApi = remember(mappingCache, prefs.hubDns) { HubApi(prefs) }
     var draft by remember(initial.id, mappingCache) { mutableStateOf(initial) }
+    val wanValid = draft.id.isNotBlank() || normalizedStunWan(draft.wanId) in wanOptions
+    LaunchedEffect(wanOptions) {
+        if (draft.id.isBlank() && wanOptions.isNotEmpty() && normalizedStunWan(draft.wanId) !in wanOptions) {
+            draft = draft.copy(wanId = wanOptions.first())
+        }
+    }
     val cachedDevices = remember(mappingCache, prefs.cacheDevices, prefs.cacheOnlineDevices) {
         val overrides = parseDeviceOverrides(prefs.deviceOverridesJson)
         val mem = mappingCache.devices
@@ -1691,7 +1699,7 @@ fun StunPenetrationScreen(
                     OutlinedButton(onClick = onDismiss, enabled = !saving, shape = LabV2.ButtonShape, modifier = Modifier.weight(1f)) { Text("取消", style = LabTypography.Button) }
                     OutlinedButton(
                         onClick = { onSave(draft) },
-                        enabled = !saving,
+                        enabled = !saving && wanValid,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.weight(1.35f),
                         border = BorderStroke(1.dp, StunBlue.copy(alpha = .36f)),
@@ -1733,7 +1741,7 @@ fun StunPenetrationScreen(
                         }
                     }
                 }
-                if (wanOptions.size > 1 || normalizedStunWan(draft.wanId) != "wan") {
+                if (wanOptions.size > 1) {
                     Text("线路", style = LabTypography.SectionTitle)
                     wanOptions.chunked(3).forEach { group ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -1741,7 +1749,7 @@ fun StunPenetrationScreen(
                                 FilterChip(
                                     selected = normalizedStunWan(draft.wanId) == id,
                                     onClick = { draft = draft.copy(wanId = id) },
-                                    enabled = !saving && stunWanSelectable(id, availableWanIds),
+                                    enabled = !saving,
                                     label = { Text(id.uppercase(Locale.ROOT), fontSize = LabTypography.Supporting.fontSize) },
                                     modifier = Modifier.weight(1f),
                                 )

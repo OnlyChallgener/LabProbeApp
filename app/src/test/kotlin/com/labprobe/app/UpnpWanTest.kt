@@ -2,44 +2,78 @@ package com.labprobe.app
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UpnpWanTest {
     @Test
-    fun singleWanDoesNotExposeWan1Button() {
+    fun singleOnlineWanDoesNotExposeWan1ButtonOrSelector() {
         val inventory = WanInventory(
             wans = listOf(
                 WanInfo(
-                    wanId = "wan", supported = true, configured = true, enabled = true,
+                    wanId = "wan", supported = true, configured = true, enabled = true, online = true,
                     capabilities = mapOf("upnp" to true),
                 ),
                 WanInfo(
-                    wanId = "wan1", supported = true, configured = false, enabled = false,
-                    capabilities = mapOf("upnp" to false),
+                    wanId = "wan1", supported = true, configured = true, enabled = true, online = false,
+                    capabilities = mapOf("upnp" to true),
                 ),
             ),
-            configuredCount = 1,
+            configuredCount = 2,
+            onlineCount = 1,
         )
         assertEquals(listOf("AUTO", "WAN"), upnpWanOptions(inventory, "AUTO"))
+        assertFalse(upnpShowsWanSelector(inventory))
     }
 
     @Test
-    fun configuredWan1AddsButtonEvenWhenOffline() {
+    fun dualOnlineWansExposeBothButtonsAndSelector() {
         val inventory = WanInventory(
             wans = listOf(
-                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, capabilities = mapOf("upnp" to true)),
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("upnp" to true)),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("upnp" to true)),
+            ),
+            configuredCount = 2,
+            onlineCount = 2,
+        )
+        assertEquals(listOf("AUTO", "WAN", "WAN1"), upnpWanOptions(inventory, "AUTO"))
+        assertTrue(upnpShowsWanSelector(inventory))
+    }
+
+    @Test
+    fun offlineCurrentBindingIsNotAddedBackAsAnOption() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("upnp" to true)),
                 WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = false, capabilities = mapOf("upnp" to true)),
             ),
             configuredCount = 2,
+            onlineCount = 1,
         )
-        assertEquals(listOf("AUTO", "WAN", "WAN1"), upnpWanOptions(inventory, "AUTO"))
+        assertEquals(listOf("AUTO", "WAN"), upnpWanOptions(inventory, "WAN1"))
+    }
+
+    @Test
+    fun wan1OnlyOnlineDoesNotShowPrimaryWanOrSelector() {
+        val inventory = WanInventory(
+            wans = listOf(
+                WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = false, capabilities = mapOf("upnp" to true)),
+                WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("upnp" to true)),
+            ),
+            configuredCount = 2,
+            onlineCount = 1,
+        )
+        assertEquals(listOf("AUTO", "WAN1"), upnpWanOptions(inventory, "AUTO"))
+        assertFalse(upnpShowsWanSelector(inventory))
     }
 
     @Test
     fun knownZeroCapabilityDoesNotInventWan() {
         val inventory = WanInventory(
-            wans = listOf(WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, capabilities = mapOf("upnp" to false))),
+            wans = listOf(WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("upnp" to false))),
             configuredCount = 1,
+            onlineCount = 1,
         )
         assertEquals(emptyList<String>(), upnpWanOptions(inventory, ""))
     }
@@ -47,6 +81,7 @@ class UpnpWanTest {
     @Test
     fun legacyHubRetainsAutoAndWanWithoutInventory() {
         assertEquals(listOf("AUTO", "WAN"), upnpWanOptions(null, "AUTO"))
+        assertTrue(upnpShowsWanSelector(null))
     }
 
     @Test

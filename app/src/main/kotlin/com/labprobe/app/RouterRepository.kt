@@ -391,7 +391,6 @@ class RouterRepository internal constructor(private val prefs: AppPrefs) {
         val key = "wans"
         val fingerprint = capabilitiesFingerprint
         val old: RouterResource<WanInventory> = if (cache.wansFor == fingerprint) _wans.value else RouterResource()
-        if (!force && old.value != null && cache.isFresh(old.updatedAt, cache.WAN_TTL_MS)) return@withLock
         val seq = sequence(key).incrementAndGet()
         _wans.value = old.copy(refreshing = true, error = "", generation = seq)
         val requestKey = if (force) "$key:force" else key

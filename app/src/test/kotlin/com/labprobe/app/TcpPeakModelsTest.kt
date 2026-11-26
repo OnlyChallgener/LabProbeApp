@@ -175,6 +175,24 @@ class TcpPeakModelsTest {
     }
 
     @Test
+    fun relayPollingPathCarriesNormalizedWanAndTaskIds() {
+        assertEquals(
+            "/api/tcp-session-test?wanId=wan1&taskId=task%2F1",
+            tcpPeakTaskPath(" WAN1 ", "task/1"),
+        )
+        assertEquals("/api/tcp-session-test?taskId=task+1", tcpPeakTaskPath("", "task 1"))
+        assertEquals("/api/tcp-session-test", tcpPeakTaskPath("", ""))
+    }
+
+    @Test
+    fun relayStopBodyCarriesNormalizedWanAndTaskIds() {
+        val body = tcpPeakStopBody(" WAN1 ", " task-1 ")
+
+        assertEquals("wan1", body.getString("wanId"))
+        assertEquals("task-1", body.getString("taskId"))
+    }
+
+    @Test
     fun relaySnapshotJsonPreservesWanIdAndLegacyEmptyValue() {
         val snapshot = TcpPeakSnapshot.fromRelayJson(
             JSONObject().put(
@@ -226,39 +244,58 @@ class TcpPeakModelsTest {
     }
 
     @Test
-    fun relayWanSelectionPrefersDefaultEgressAndKeepsExplicitSelection() {
-        val wans = listOf(
-            WanInfo(wanId = "wan1", configured = true),
-            WanInfo(wanId = "wan2", configured = true, defaultEgress = true),
+    fun relayWanSelectionAlwaysPrefersWanAndSortsOptions() {
+        fun wan(id: String, defaultEgress: Boolean = false) = WanInfo(
+            wanId = id,
+            supported = true,
+            configured = true,
+            enabled = true,
+            online = true,
+            defaultEgress = defaultEgress,
         )
+        val wans = listOf(wan("wan2", defaultEgress = true), wan("wan1", defaultEgress = true), wan("wan"))
 
         val defaultSelection = tcpPeakWanSelectionState(TcpPeakSide.RELAY, "", wans)
         val explicitSelection = tcpPeakWanSelectionState(TcpPeakSide.RELAY, " WAN1 ", wans)
-        assertEquals("wan2", defaultSelection.selectedWanId)
-        assertEquals(listOf("wan1", "wan2"), defaultSelection.options.map(WanInfo::wanId))
+        assertEquals("wan", defaultSelection.selectedWanId)
+        assertEquals(listOf("wan", "wan1", "wan2"), defaultSelection.options.map(WanInfo::wanId))
         assertTrue(defaultSelection.showSelector)
         assertEquals("wan1", explicitSelection.selectedWanId)
     }
 
     @Test
-    fun unknownCurrentWanIsPreservedForLegacyRecords() {
+    fun unknownCurrentWanIsPreservedWithoutBeingAddedAsAnOption() {
         val state = tcpPeakWanSelectionState(
             TcpPeakSide.RELAY,
             "legacy0",
-            listOf(WanInfo(wanId = "wan", configured = true)),
+            listOf(WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true)),
         )
 
         assertEquals("legacy0", state.selectedWanId)
-        assertEquals(listOf("wan", "legacy0"), state.options.map(WanInfo::wanId))
-        assertTrue(state.showSelector)
+        assertEquals(listOf("wan"), state.options.map(WanInfo::wanId))
+        assertFalse(state.showSelector)
     }
 
     @Test
-    fun relayWanSelectionFallsBackToFirstConfiguredWan() {
+    fun offlineCurrentBindingIsHiddenButNotRewritten() {
         val wans = listOf(
-            WanInfo(wanId = "wan1", configured = false),
-            WanInfo(wanId = "wan2", configured = true),
-            WanInfo(wanId = "wan3", configured = true),
+            WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = false),
+            WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true),
+        )
+
+        val state = tcpPeakWanSelectionState(TcpPeakSide.RELAY, "wan1", wans)
+
+        assertEquals("wan1", state.selectedWanId)
+        assertEquals(listOf("wan"), state.options.map(WanInfo::wanId))
+        assertFalse(state.showSelector)
+    }
+
+    @Test
+    fun relayWanSelectionFallsBackToFirstOnlineWan() {
+        val wans = listOf(
+            WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = false),
+            WanInfo(wanId = "wan2", supported = true, configured = true, enabled = true, online = true),
+            WanInfo(wanId = "wan3", supported = true, configured = true, enabled = true, online = true),
         )
 
         val state = tcpPeakWanSelectionState(TcpPeakSide.RELAY, "", wans)
@@ -269,11 +306,12 @@ class TcpPeakModelsTest {
     }
 
     @Test
-    fun singleConfiguredWanIsSelectedAutomaticallyWithoutSelector() {
+    fun singleOnlineWan1IsSelectedAutomaticallyWithoutSelector() {
         val wans = listOf(
-            WanInfo(wanId = "wan1", configured = true),
-            WanInfo(wanId = "wan2", configured = false),
-            WanInfo(wanId = "bad/id", configured = true),
+            WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = false),
+            WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true),
+            WanInfo(wanId = "wan2", supported = true, configured = true, enabled = true, online = false),
+            WanInfo(wanId = "bad/id", supported = true, configured = true, enabled = true, online = true),
         )
 
         val state = tcpPeakWanSelectionState(TcpPeakSide.RELAY, "", wans)
@@ -286,8 +324,8 @@ class TcpPeakModelsTest {
     @Test
     fun appSideNeverSelectsWanAndLegacyHubWithoutWansStaysEmpty() {
         val wans = listOf(
-            WanInfo(wanId = "wan1", configured = true),
-            WanInfo(wanId = "wan2", configured = true, defaultEgress = true),
+            WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true),
+            WanInfo(wanId = "wan2", supported = true, configured = true, enabled = true, online = true, defaultEgress = true),
         )
 
         val app = tcpPeakWanSelectionState(TcpPeakSide.APP, "wan1", wans)
@@ -302,13 +340,69 @@ class TcpPeakModelsTest {
 
     @Test
     fun legacyDefaultNeverDiscardsKnownMultiWanOrExplicitSecondaryLine() {
+        fun onlineWan(id: String) = WanInfo(wanId = id, supported = true, configured = true, enabled = true, online = true)
         assertTrue(tcpPeakUsesLegacyDefault(null, ""))
-        assertTrue(tcpPeakUsesLegacyDefault(WanInventory(configuredCount = 1), "WAN"))
-        assertFalse(tcpPeakUsesLegacyDefault(WanInventory(configuredCount = 2), "wan"))
-        assertFalse(tcpPeakUsesLegacyDefault(WanInventory(configuredCount = 1), "wan1"))
-        assertFalse(tcpPeakUsesLegacyDefault(WanInventory(wans = listOf(
-            WanInfo(wanId = "wan", configured = true), WanInfo(wanId = "wan1", configured = true)
+        assertTrue(tcpPeakUsesLegacyDefault(WanInventory(wans = listOf(onlineWan("wan"))), "WAN"))
+        assertFalse(tcpPeakUsesLegacyDefault(WanInventory(wans = listOf(onlineWan("wan"), onlineWan("wan1"))), "wan"))
+        assertFalse(tcpPeakUsesLegacyDefault(WanInventory(wans = listOf(onlineWan("wan1"))), "wan1"))
+        assertTrue(tcpPeakUsesLegacyDefault(WanInventory(wans = listOf(
+            onlineWan("wan"), onlineWan("wan1").copy(online = false)
         )), ""))
+        assertFalse(tcpPeakUsesLegacyDefault(WanInventory(wans = listOf(
+            onlineWan("wan").copy(online = false), onlineWan("wan1")
+        )), "wan"))
+    }
+
+    @Test
+    fun runnableRelayConfigUsesOnlineWanAndRejectsOfflineBinding() {
+        val inventory = WanInventory(wans = listOf(
+            WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = false),
+            WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true),
+        ))
+        val base = TcpPeakConfig(side = TcpPeakSide.RELAY, host = "example.com")
+
+        assertEquals("wan", tcpPeakRunnableConfig(base, inventory)?.wanId)
+        assertEquals(null, tcpPeakRunnableConfig(base.copy(wanId = "wan1"), inventory))
+        assertEquals("wan", tcpPeakRunnableConfig(base.copy(wanId = "wan"), inventory)?.wanId)
+        val appConfig = base.copy(side = TcpPeakSide.APP, wanId = "wan1")
+        assertEquals(appConfig, tcpPeakRunnableConfig(appConfig, inventory))
+    }
+
+    @Test
+    fun allOfflineInventoryNeverFallsBackToDefaultEgress() {
+        val inventory = WanInventory(wans = listOf(
+            WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = false),
+            WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = false),
+        ))
+        val config = TcpPeakConfig(side = TcpPeakSide.RELAY, host = "example.com", wanId = "wan")
+        assertFalse(tcpPeakUsesLegacyDefault(inventory, "wan"))
+        assertEquals(null, tcpPeakRunnableConfig(config, inventory))
+    }
+
+    @Test
+    fun wan1OnlyInventoryRunsFreshRelayConfigWithoutUsingDefaultEgress() {
+        val inventory = WanInventory(wans = listOf(
+            WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = false),
+            WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true),
+        ))
+        val config = TcpPeakConfig(side = TcpPeakSide.RELAY, host = "example.com")
+        assertFalse(tcpPeakUsesLegacyDefault(inventory, "wan"))
+        assertEquals("wan1", tcpPeakRunnableConfig(config, inventory)?.wanId)
+        assertEquals(null, tcpPeakRunnableConfig(config.copy(wanId = "wan"), inventory))
+    }
+
+    @Test
+    fun historyLabelsRequireDualOnlineLines() {
+        val singleOnline = WanInventory(
+            wans = listOf(WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true)),
+            onlineCount = 1,
+        )
+        val dualOnline = singleOnline.copy(
+            wans = singleOnline.wans + WanInfo(wanId = "wan1", supported = true, configured = true, enabled = true, online = true),
+            onlineCount = 2,
+        )
+        assertFalse(tcpPeakHistoryShowsWanLabels(singleOnline))
+        assertTrue(tcpPeakHistoryShowsWanLabels(dualOnline))
     }
 
     @Test

@@ -9,7 +9,6 @@ package com.labprobe.app
  */
 internal class RouterSlowDataCache private constructor() {
     val STATUS_TTL_MS = 15_000L
-    val WAN_TTL_MS = 300_000L
     val MAPPING_TTL_MS = 30_000L
     val SETTINGS_TTL_MS = 60_000L
 

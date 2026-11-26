@@ -185,7 +185,7 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
             scope.launch { runner.requestStop() }
         } else {
             scope.launch {
-                runCatching { api.stopTcpPeakTask(current.taskId) }
+                runCatching { api.stopTcpPeakTask(current.taskId, current.wanId) }
                     .onSuccess { publish(it.withRetainedWanId(current.wanId)) }
                     .onFailure {
                         _state.value = _state.value.copy(notice = "停止通知暂未送达，正在继续确认 Relay 状态")
@@ -206,18 +206,18 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
 
     private suspend fun runRelay(config: TcpPeakConfig) {
         var snapshot = runCatching { api.startTcpPeakTask(config) }.getOrElse { startError ->
-            val recovered = runCatching { api.getTcpPeakTask() }.getOrNull()
+            val recovered = runCatching { api.getTcpPeakTask(config.wanId) }.getOrNull()
             if (recovered?.active == true) recovered else throw startError
-        }
+        }.withRetainedWanId(config.wanId)
         publish(snapshot)
         if (stopRequested.get() && snapshot.active && snapshot.taskId.isNotBlank()) {
-            snapshot = api.stopTcpPeakTask(snapshot.taskId).withRetainedWanId(snapshot.wanId)
+            snapshot = api.stopTcpPeakTask(snapshot.taskId, snapshot.wanId).withRetainedWanId(snapshot.wanId)
             publish(snapshot)
         }
         var consecutiveFailures = 0
         while (scope.isActive && snapshot.active) {
             delay(1_000L)
-            val next = runCatching { api.getTcpPeakTask() }
+            val next = runCatching { api.getTcpPeakTask(snapshot.wanId, snapshot.taskId) }
             if (next.isSuccess) {
                 snapshot = next.getOrThrow().withRetainedWanId(snapshot.wanId)
                 consecutiveFailures = 0
@@ -230,7 +230,7 @@ private class TcpPeakController(context: Context, private val prefs: AppPrefs) {
                     notice = error
                 )
                 if (consecutiveFailures >= 5) {
-                    runCatching { api.stopTcpPeakTask(snapshot.taskId) }
+                    runCatching { api.stopTcpPeakTask(snapshot.taskId, snapshot.wanId) }
                     snapshot = snapshot.copy(
                         state = "interrupted",
                         status = "Hub 状态请求连续超时",
@@ -284,6 +284,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     val pendingAiCommand = remember(prefs) {
         TcpPeakPendingAiCommand.fromJson(prefs.tcpPeakPendingAiCommandJson)
     }
+    var consumedAiCommandId by remember { mutableStateOf("") }
     val ui by controller.state.collectAsState()
     var side by remember { mutableStateOf(pendingAiCommand?.config?.side ?: TcpPeakSide.APP) }
     var selectedWanId by remember { mutableStateOf(pendingAiCommand?.config?.wanId.orEmpty()) }
@@ -297,13 +298,11 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var logsExpanded by remember { mutableStateOf(false) }
     var historyExpanded by remember { mutableStateOf(false) }
     val active = ui.snapshot.active
-    val configuredWans = remember(wanResource.value) {
-        wanResource.value?.wans.orEmpty().filter { it.configured }
-    }
-    val wanSelection = tcpPeakWanSelectionState(side, selectedWanId, configuredWans)
+    val inventoryWans = remember(wanResource.value) { wanResource.value?.wans.orEmpty() }
+    val wanSelection = tcpPeakWanSelectionState(side, selectedWanId, inventoryWans)
 
     val explicitWan = wanSelection.selectedWanId
-    val selectedLine = configuredWans.firstOrNull { it.wanId.equals(explicitWan, true) }
+    val selectedLine = inventoryWans.firstOrNull { it.wanId.equals(explicitWan, true) }
     val legacyDefault = tcpPeakUsesLegacyDefault(wanResource.value, explicitWan)
     val inventoryPending = side == TcpPeakSide.RELAY && wanResource.value == null &&
         (wanResource.refreshing || wanResource.error.isBlank())
@@ -321,7 +320,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
         }
     }
     val relayLineUnavailable = side == TcpPeakSide.RELAY && !legacyDefault &&
-        (selectedLine == null || !selectedLine.enabled || explicitWan !in relayAvailableWans)
+        (selectedLine == null || !selectedLine.selectable || explicitWan !in relayAvailableWans)
 
     fun currentConfig(): TcpPeakConfig = TcpPeakConfig(
         side = side,
@@ -340,18 +339,24 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
     DisposableEffect(controller) {
         onDispose { controller.dispose() }
     }
-    LaunchedEffect(controller, pendingAiCommand?.id) {
-        if (prefs.tcpPeakPendingAiCommandJson.isNotBlank()) {
+    LaunchedEffect(controller, pendingAiCommand?.id, wanResource.value) {
+        pendingAiCommand?.let {
+            if (it.id == consumedAiCommandId) return@LaunchedEffect
+            if (it.config.side == TcpPeakSide.RELAY && wanResource.value == null && wanResource.error.isBlank()) return@LaunchedEffect
+            val config = tcpPeakRunnableConfig(it.config, wanResource.value)
+            consumedAiCommandId = it.id
+            if (config == null) {
+                prefs.tcpPeakPendingAiCommandJson = ""
+                return@LaunchedEffect
+            }
             // One-shot handoff: clearing before start prevents a recomposition
             // or process restore from launching a duplicate task.
             prefs.tcpPeakPendingAiCommandJson = ""
-        }
-        pendingAiCommand?.let {
-            if (it.config.validationError() == null && it.config.host.isNotBlank()) {
-                prefs.addTcpPeakHostHistory(it.config.host)
+            if (config.validationError() == null && config.host.isNotBlank()) {
+                prefs.addTcpPeakHostHistory(config.host)
                 hostHistory = prefs.tcpPeakHostHistory()
             }
-            controller.start(it.config)
+            controller.start(config)
         }
     }
 
@@ -401,7 +406,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
                 if (active) {
                     controller.stop()
                 } else {
-                    val cfg = currentConfig()
+                    val cfg = tcpPeakRunnableConfig(currentConfig(), wanResource.value) ?: return@Button
                     if (cfg.validationError() == null && cfg.host.isNotBlank()) {
                         prefs.addTcpPeakHostHistory(cfg.host)
                         hostHistory = prefs.tcpPeakHostHistory()
@@ -424,7 +429,9 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
         if (!active && side == TcpPeakSide.RELAY) {
             if (inventoryPending) {
                 Text("正在读取线路配置…", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
-            } else if (relayLineUnavailable || (wanResource.value == null && wanResource.error.isNotBlank())) {
+            } else if ((relayLineUnavailable && selectedLine?.selectable == true) ||
+                (wanResource.value == null && wanResource.error.isNotBlank())
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         if (relayLineUnavailable) "所选线路未确认可用或 Relay 暂不支持" else "未获取线路配置，将使用默认出口",
@@ -445,7 +452,7 @@ fun TcpPeakConnectionsScreen(prefs: AppPrefs, onBack: () -> Unit) {
         TcpPeakProtocolCard("IPv6", ui.snapshot.ipv6, LabV2.Green, expanded = family != TcpPeakFamily.IPV4)
         TcpPeakResourceCard(ui.snapshot)
         TcpPeakExpandableSection("测试历史", ui.history.size, historyExpanded, { historyExpanded = !historyExpanded }) {
-            TcpPeakHistoryContent(ui.history)
+            TcpPeakHistoryContent(ui.history, tcpPeakHistoryShowsWanLabels(wanResource.value))
         }
     }
 }
@@ -1077,7 +1084,7 @@ private fun TcpPeakExpandableSection(
 }
 
 @Composable
-private fun TcpPeakHistoryContent(history: List<TcpPeakHistory>) {
+private fun TcpPeakHistoryContent(history: List<TcpPeakHistory>, showWanLabels: Boolean) {
     if (history.isEmpty()) {
         Text("暂无历史记录", style = LabTypography.Supporting.copy(color = LabV2.InkMuted))
         return
@@ -1104,7 +1111,7 @@ private fun TcpPeakHistoryContent(history: List<TcpPeakHistory>) {
                 border = BorderStroke(1.dp, LabCoreSurface.Border.copy(alpha = .72f))
             ) {
                 Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    val wanLabel = tcpPeakWanLabel(row.snapshot.wanId)
+                    val wanLabel = if (showWanLabels) tcpPeakWanLabel(row.snapshot.wanId) else ""
                     Text(
                         "${timeFormatter.format(Date(row.startedEpochMs))} · ${row.side.label} · ${row.host}:${row.port}" +
                             if (wanLabel.isNotEmpty()) " · $wanLabel" else "",

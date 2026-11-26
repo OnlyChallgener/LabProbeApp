@@ -158,7 +158,7 @@ fun NetworkHealthScreen(
     val exitOk = cleanApiText(nas?.optString("exitIpv4")).isNotBlank() ||
         cleanApiText(nas?.optString("exitIpv6")).isNotBlank() ||
         cleanApiText(router?.optString("exitIpv4")).isNotBlank()
-    val wanStatusText = wanHealthStatusLabel(parseRouterWans(state.routerDashboard ?: org.json.JSONObject()).filter { it.configured })
+    val wanStatusText = wanHealthStatusLabel(onlineRouterWans(state.routerDashboard ?: org.json.JSONObject()))
     val hubOk = prefs.hub.isNotBlank() && state.hubConnected
     val onlineCount = state.onlineDevices.size
     val badCount = state.events.take(8).count { it.type.contains("ddns", true) || it.type.contains("offline", true) }.coerceAtMost(4)

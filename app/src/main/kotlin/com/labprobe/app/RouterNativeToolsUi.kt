@@ -570,7 +570,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
     var server by rememberSaveable { mutableStateOf(servers.first()) }
     var portText by rememberSaveable { mutableStateOf("3478") }
     var mode by rememberSaveable { mutableStateOf("classic") }
-    var interfaceName by rememberSaveable { mutableStateOf("wan") }
+    var interfaceName by rememberSaveable { mutableStateOf("") }
     val interfaceOptions = remember(wanResource.value, interfaceName) {
         natWanOptions(wanResource.value, interfaceName)
     }
@@ -593,9 +593,14 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     LaunchedEffect(routerRepository) { routerRepository.refreshWans() }
-    val natSupported = wanResource.value?.selectable("natDiagnostic")?.isNotEmpty() ?: true
-    LaunchedEffect(interfaceOptions) {
-        if (interfaceOptions.none { it.first == interfaceName }) interfaceName = interfaceOptions.firstOrNull()?.first.orEmpty()
+    val natSupported = wanResource.value?.supportsLineCapability("natDiagnostic") ?: true
+    val selectedInterfaceAvailable = interfaceOptions.any { it.first == interfaceName }
+    LaunchedEffect(interfaceOptions, wanResource.value) {
+        if (interfaceName.isBlank() && interfaceOptions.isNotEmpty() &&
+            (wanResource.value != null || wanResource.error.isNotBlank())
+        ) {
+            interfaceName = interfaceOptions.first().first
+        }
     }
     LaunchedEffect(Unit) { tasks.ensure("nat") }
     LaunchedEffect(task.updatedAt, task.state) {
@@ -674,7 +679,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                             tasks.startNat(server, port, interfaceName, mode)
                         }
                     },
-                    enabled = !running && natSupported && interfaceName.isNotBlank(),
+                    enabled = !running && natSupported && selectedInterfaceAvailable,
                     shape = startShape,
                     color = Color.Transparent,
                     modifier = Modifier.fillMaxWidth().height(44.dp)

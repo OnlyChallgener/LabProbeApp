@@ -1,6 +1,7 @@
 package com.labprobe.app.feature.router.ipv6
 
 import com.labprobe.app.LabNavigationIndicator
+import com.labprobe.app.WAN_ID_ORDER
 
 import androidx.compose.foundation.layout.heightIn
 import androidx.activity.compose.BackHandler
@@ -100,6 +101,7 @@ fun Ipv6Screen(prefs: AppPrefs, onBack: () -> Unit) {
         ?.filter { it.configured && it.enabled && "ipv6" in it.families }
         ?.map { it.wanId }.orEmpty() + state.config?.wans?.map { it.wanId }.orEmpty())
         .distinct()
+        .sortedWith(WAN_ID_ORDER)
     DetailShell(
         title = "IPv6 设置",
         subtitle = "配置将通过 LabProbe Hub 安全同步",

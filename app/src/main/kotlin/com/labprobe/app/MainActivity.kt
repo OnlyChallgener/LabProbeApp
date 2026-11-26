@@ -230,6 +230,7 @@ object AppVersion {
                 "统一 WAN 发现、逐线路网络详情、固件测速、NAT、原生 DDNS、端口映射及 UPnP 展示",
                 "STUN 与 TCP 会话增加线路能力校验，LabProbe DDNS 支持逐 WAN 地址检测",
                 "设置页展开折叠、HTTPS 勾选、锐捷官方账号授权与退出流程",
+                "手机测速单方向封顶保持 10 秒（含 2 秒预热）",
                 "NAT 诊断、SSH、映射与首页多 WAN 展示收尾；双 WAN 实际运行仍需实机验证"
             ),
             "v0.14.11 build355 · DDNS 与映射排版收尾" to listOf(
@@ -5076,7 +5077,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
     val router = data?.optJSONObject("router")
     val nasV6 = safeNasIpv6ForUi(nas, router)
     val homeWans = remember(state.routerDashboard) {
-        parseRouterWans(state.routerDashboard ?: JSONObject()).filter { it.configured }
+        onlineRouterWans(state.routerDashboard ?: JSONObject())
     }
     val homeCacheIdentity = remember(prefs.hubRoot, prefs.workspaceId, prefs.token) {
         workspaceDigest(prefs.hubRoot + "|" + prefs.workspaceId + "|" + prefs.token)
@@ -5254,6 +5255,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                         nas = nas,
                         router = router,
                         wans = homeWans,
+                        hasWanInventory = state.routerDashboard?.optJSONArray("wans") != null,
                         privacyMode = privacyMode,
                         onClick = { onNavigate("tool_ping") },
                         onIconClick = { onNavigate("tool_portmap") }
@@ -5271,7 +5273,8 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
                                 },
                                 onClick = { onNavigate("tool_stun") },
                                 onNavigate = onNavigate,
-                                prefs = prefs
+                                prefs = prefs,
+                                showWanLabels = homeWans.size > 1,
                             )
                         }
                     }
@@ -5585,17 +5588,13 @@ fun decodeHomeVpnRows(raw: String): List<Pair<String, String>> = runCatching {
     }.distinctBy { it.first.lowercase(Locale.getDefault()) }
 }.getOrDefault(emptyList())
 
-internal fun wanHealthStatusLabel(wans: List<RouterWanUi>): String {
-    val configured = wans.filter { it.configured }
-    if (configured.size < 2) return ""
-    val online = configured.count { it.online }
-    val defaultOnline = configured.firstOrNull { it.defaultEgress }?.online != false
-    return when {
-        online == 0 -> "全部线路异常"
-        online < configured.size || !defaultOnline -> "部分线路异常"
-        else -> "全部正常"
-    }
-}
+internal fun onlineRouterWans(root: JSONObject): List<RouterWanUi> =
+    parseRouterWans(root)
+        .filter { it.configured && it.enabled && it.online }
+        .sortedWith(compareBy<RouterWanUi> { wanOrderRank(it.wanId) }.thenBy { it.wanId })
+
+internal fun wanHealthStatusLabel(wans: List<RouterWanUi>): String =
+    if (wans.count { it.online } > 1) "全部正常" else ""
 
 fun networkScore(hubOk: Boolean, exitOk: Boolean, vpnOk: Boolean, onlineCount: Int, events: List<EventItem>): Int {
     var score = 64
@@ -6051,11 +6050,11 @@ fun HealthDataRowDisplay(label: String, realValue: String?, displayValue: String
 }
 
 @Composable
-internal fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null, wans: List<RouterWanUi> = emptyList()) {
+internal fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: Boolean, onClick: () -> Unit = {}, onIconClick: (() -> Unit)? = null, wans: List<RouterWanUi> = emptyList(), hasWanInventory: Boolean = false) {
     HealthCard(Modifier.clip(HomeCardShape)) {
         HealthSectionTitle("出口与路由", "NAS 出口、路由 WAN 地址，点地址复制。", Icons.Rounded.Public, Color(0xFF0EA5E9), onIconClick = onIconClick)
         val nasIpv6 = safeNasIpv6ForUi(nas, router)
-        val wan6Rows = routerWan6Rows(router)
+        val wan6Rows = if (wans.isEmpty() && !hasWanInventory) routerWan6Rows(router) else emptyList()
         val addressRows = buildList {
             cleanApiText(nas?.optString("exitIpv4")).takeIf { it.isNotBlank() }?.let { add("NAS IPv4" to it) }
             add("NAS IPv6" to nasIpv6)
@@ -6066,8 +6065,8 @@ internal fun HealthExitCard(nas: JSONObject?, router: JSONObject?, privacyMode: 
                     if (wan.ipv4.isNotBlank()) add("$name 接口 IPv4" to wan.ipv4)
                     if (wan.publicIpv6.isNotBlank()) add("$name 公网 IPv6" to wan.publicIpv6)
                     if (wan.ipv6.isNotBlank()) add("$name 接口 IPv6" to wan.ipv6)
-                    if (wan.publicIpv4.isBlank() && wan.ipv4.isBlank() && wan.publicIpv6.isBlank() && wan.ipv6.isBlank()) {
-                        add(name to if (wan.online) "暂无地址" else "离线")
+                    if (wan.online && wan.publicIpv4.isBlank() && wan.ipv4.isBlank() && wan.publicIpv6.isBlank() && wan.ipv6.isBlank()) {
+                        add(name to "暂无地址")
                     }
                 }
             } else {
@@ -6095,6 +6094,7 @@ fun HealthStunCard(
     onNavigate: (String) -> Unit = {},
     prefs: AppPrefs? = null,
     title: String = "STUN 穿透",
+    showWanLabels: Boolean = false,
 ) {
     val context = LocalContext.current
     HealthCard(Modifier.clip(HomeCardShape).clickable(onClick = onClick)) {
@@ -6166,7 +6166,7 @@ fun HealthStunCard(
                 verticalAlignment = if (mayWrap) Alignment.Top else Alignment.CenterVertically
             ) {
                 Text(
-                    row.label + if (row.wanId.isNotBlank()) " · ${row.wanId.uppercase(Locale.ROOT)}" else "",
+                    row.label + if (showWanLabels && row.wanId.isNotBlank()) " · ${row.wanId.uppercase(Locale.ROOT)}" else "",
                     Modifier.width(94.dp).then(if (mayWrap) Modifier.padding(top = 2.dp) else Modifier),
                     style = LabTypography.Value.copy(fontWeight = FontWeight.SemiBold, color = LabV2.InkMuted),
                     maxLines = 1,
@@ -13168,16 +13168,16 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
     suspend fun requestAgentCleanup(): JSONObject = withContext(Dispatchers.IO) {
         requestJson("/api/agent/cleanup", "POST", JSONObject())
     }
-    suspend fun getTcpPeakTask(): TcpPeakSnapshot = withContext(Dispatchers.IO) {
-        TcpPeakSnapshot.fromRelayJson(requestJsonShort("/api/tcp-session-test"))
+    suspend fun getTcpPeakTask(wanId: String = "", taskId: String = ""): TcpPeakSnapshot = withContext(Dispatchers.IO) {
+        TcpPeakSnapshot.fromRelayJson(requestJsonShort(tcpPeakTaskPath(wanId, taskId)))
     }
     suspend fun startTcpPeakTask(config: TcpPeakConfig): TcpPeakSnapshot = withContext(Dispatchers.IO) {
         val body = config.toRelayStartJson()
         TcpPeakSnapshot.fromRelayJson(requestJsonShort("/api/tcp-session-test/start", "POST", body))
     }
-    suspend fun stopTcpPeakTask(taskId: String): TcpPeakSnapshot = withContext(Dispatchers.IO) {
+    suspend fun stopTcpPeakTask(taskId: String, wanId: String = ""): TcpPeakSnapshot = withContext(Dispatchers.IO) {
         TcpPeakSnapshot.fromRelayJson(
-            requestJsonShort("/api/tcp-session-test/stop", "POST", JSONObject().put("taskId", taskId))
+            requestJsonShort("/api/tcp-session-test/stop", "POST", tcpPeakStopBody(wanId, taskId))
         )
     }
     suspend fun getAgentCleanupStatus(commandId: String): JSONObject = withContext(Dispatchers.IO) {

@@ -56,7 +56,9 @@ class RouterDashboardRealtimeRaceTest {
         """.trimIndent()), JSONObject()
             .put("sampleEpochMs", 20_000L)
             .put("wans", org.json.JSONArray("[{\"wanId\":\"wan\",\"uploadBps\":2000}]")))
-        val late = JSONObject("""{"telemetryEpoch":10,"telemetry":{"wans":[]}}""")
+        val late = JSONObject("""{"telemetryEpoch":10,
+            "wans":[{"wanId":"wan","configured":true,"online":false}],
+            "telemetry":{"wans":[]}}""")
 
         val result = requireNotNull(mergeRouterDashboardSnapshot(current, late))
         val inventory = result.getJSONArray("wans")

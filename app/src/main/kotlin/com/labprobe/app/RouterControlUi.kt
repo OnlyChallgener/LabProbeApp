@@ -352,8 +352,8 @@ fun MappingAndUpnpScreen(
                     onOpenWireGuard = onOpenWireGuard,
                     onOpenFavorites = onOpenFavorites,
                 )
-                "portMapping" -> NativePortMappingPage(prefs)
-                else -> UpnpPage(prefs)
+                "portMapping" -> NativePortMappingPage(prefs, capabilityResource.value?.nativePortMapping ?: true)
+                else -> UpnpPage(prefs, capabilityResource.value?.upnp ?: true)
             }
         }
     }
@@ -362,8 +362,8 @@ fun MappingAndUpnpScreen(
 
 internal fun mappingSuitePages(capabilities: RouterCapabilities?, inventory: WanInventory?): List<String> = buildList {
     add("ipv6")
-    if (inventory?.selectable("portMapping")?.isNotEmpty() ?: capabilities?.nativePortMapping ?: true) add("portMapping")
-    if (inventory?.selectable("upnp")?.isNotEmpty() ?: capabilities?.upnp ?: true) add("upnp")
+    if ((capabilities?.nativePortMapping ?: true) && (inventory?.supportsLineCapability("portMapping") ?: true)) add("portMapping")
+    if ((capabilities?.upnp ?: true) && (inventory?.supportsLineCapability("upnp") ?: true)) add("upnp")
 }
 
 private fun mappingSuitePageTitle(page: String): String = when (page) {
@@ -499,7 +499,7 @@ internal fun MappingStatusPill(text: String, color: Color, modifier: Modifier = 
 }
 
 @Composable
-private fun NativePortMappingPage(prefs: AppPrefs) {
+private fun NativePortMappingPage(prefs: AppPrefs, nativePortMappingSupported: Boolean) {
     val mappingCache = remember(prefs.hub, prefs.token) { PortMappingMemoryCache.forScope(prefs.hub, prefs.token) }
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val deviceApi = remember(prefs.hub, prefs.token, prefs.hubDns) { HubApi(prefs) }
@@ -514,7 +514,9 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
     var adding by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<NativePortMapRule?>(null) }
     val error = actionError.ifBlank { resource.error }
-    val mappingSupported = wanResource.value?.selectable("portMapping")?.isNotEmpty() ?: true
+    val mappingSupported = nativePortMappingSupported &&
+        (wanResource.value?.supportsLineCapability("portMapping") ?: true)
+    val canCreateMapping = mappingSupported && wanResource.value?.selectable("portMapping")?.isNotEmpty() == true
 
     suspend fun refreshDevices(force: Boolean = false): List<DeviceItem> {
         if (devices.isNotEmpty() && !force) return devices
@@ -576,7 +578,7 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
             if (!mappingSupported) item { CompactMessage("当前固件或 Hub 未提供可用的原生端口映射线路", RouterAmber) }
             if (resource.mutating) item { CompactMessage("设置正在后台应用，页面可以安全退出", RouterBlue) }
             if (resource.value == null) item { CompactMessage("端口映射正在后台预加载，页面无需等待", RouterBlue) }
-            if (resource.value != null && rules.isEmpty()) item { CompactEmpty("暂无端口映射", "路由器已有规则和新建规则都会显示在这里", RouterGlyph.Port) { if (mappingSupported) adding = true } }
+            if (resource.value != null && rules.isEmpty()) item { CompactEmpty("暂无端口映射", "路由器已有规则和新建规则都会显示在这里", RouterGlyph.Port) { if (canCreateMapping) adding = true } }
             items(rules, key = { "${it.ruleName}|${it.proto}|${it.srcPort}|${it.destIp}|${it.destPort}" }) { rule ->
                 NativePortRuleCard(
                     rule = rule,
@@ -587,7 +589,7 @@ private fun NativePortMappingPage(prefs: AppPrefs) {
                 )
             }
         }
-        if (mappingSupported) {
+        if (mappingSupported && canCreateMapping) {
             Surface(
                 onClick = { adding = true },
                 shape = CircleShape,
@@ -738,6 +740,14 @@ private fun NativePortRuleCard(
     }
 }
 
+internal fun nativePortMapLineOptions(wanInventory: WanInventory?): List<String> =
+    (listOf("all") + wanInventory?.selectable("portMapping").orEmpty().map { it.wanId })
+        .filter { it.isNotBlank() }
+        .distinct()
+
+internal fun nativePortMapShowsLineSelector(wanInventory: WanInventory?): Boolean =
+    (wanInventory?.selectable("portMapping")?.size ?: 0) > 1
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NativePortEditorSheet(
@@ -754,12 +764,8 @@ private fun NativePortEditorSheet(
     var sourceMode by remember(initial) { mutableStateOf(if (initial.srcIp.isBlank()) "任意来源" else "指定IP") }
     var error by remember { mutableStateOf("") }
     var showDevicePicker by remember { mutableStateOf(false) }
-    val lineOptions = remember(wanInventory, draft.wanId) {
-        (listOf("all") + (wanInventory?.selectable("portMapping")?.map { it.wanId }.orEmpty()) + listOfNotNull(draft.wanId))
-            .distinct()
-    }
-    val capableWanCount = wanInventory?.selectable("portMapping")?.size ?: 1
-    val showLineSelector = lineOptions.size > 1 && (capableWanCount > 1 || (wanInventory == null && draft.wanId !in setOf("all", "wan")))
+    val lineOptions = remember(wanInventory) { nativePortMapLineOptions(wanInventory) }
+    val showLineSelector = nativePortMapShowsLineSelector(wanInventory)
     val scope = rememberCoroutineScope()
     androidx.compose.ui.window.Dialog(
         onDismissRequest = onDismiss,
@@ -934,7 +940,7 @@ private fun NativePortDevicePickerDialog(
 }
 
 @Composable
-private fun UpnpPage(prefs: AppPrefs) {
+private fun UpnpPage(prefs: AppPrefs, upnpCapabilitySupported: Boolean) {
     val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
     val resource by repository.upnp.collectAsState()
     val wanResource by repository.wans.collectAsState()
@@ -955,7 +961,8 @@ private fun UpnpPage(prefs: AppPrefs) {
         "已停用" -> RouterMuted
         else -> RouterAmber
     }
-    val upnpSupported = wanResource.value?.selectable("upnp")?.isNotEmpty() ?: true
+    val upnpSupported = upnpCapabilitySupported &&
+        (wanResource.value?.supportsLineCapability("upnp") ?: true)
     val wanOptions = remember(wanResource.value, state.wan, upnpSupported) {
         if (upnpSupported) upnpWanOptions(wanResource.value, state.wan) else emptyList()
     }
@@ -1015,7 +1022,7 @@ private fun UpnpPage(prefs: AppPrefs) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("默认线路", fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.SemiBold, color = RouterMuted, maxLines = 1)
-                            if (wanOptions.size > 1) {
+                            if (upnpShowsWanSelector(wanResource.value) && wanOptions.size > 1) {
                                 UpnpWanSelector(state.wan, wanOptions) { wan ->
                                     scope.launch {
                                         repository.setUpnp(state.enabled, wan)
@@ -1237,10 +1244,7 @@ fun RouterFirewallScreen(prefs: AppPrefs, onBack: () -> Unit) {
     }
 
     if (adding || editing != null) {
-        val defaultWan = wanResource.value?.wans
-            ?.filter { it.configured }
-            ?.firstOrNull { it.defaultEgress }
-            ?: wanResource.value?.wans?.firstOrNull { it.configured }
+        val defaultWan = wanResource.value?.configured()?.firstOrNull()
         val defaultInterface = defaultWan?.logicalInterface?.ifBlank { defaultWan.wanId }?.ifBlank { "wan" } ?: "wan"
         FirewallEditorPage(
             initial = editing ?: FirewallRule(direction = currentDirection, inIface = if (currentDirection == "outbound") "" else defaultInterface, outIface = if (currentDirection == "inbound") "" else "lan"),
@@ -2497,7 +2501,7 @@ private fun DdnsEditorPage(initial:DdnsRecord,externalError:String="",nativeDdns
     val interfaceOptions=remember(wanInventory,record.interfaceName){
         nativeDdnsWanOptions(wanInventory,record.interfaceName)
     }
-    val ddnsSupported = if (nativeDdns) wanInventory?.selectable("nativeDdns")?.isNotEmpty() ?: true else true
+    val ddnsSupported = if (nativeDdns) wanInventory?.supportsLineCapability("nativeDdns") ?: true else true
     val recordTypes=remember(record.provider){
         listOf("A","AAAA","TXT").filter{nativeDdnsSupportsRecordType(record.provider,it)}
     }
