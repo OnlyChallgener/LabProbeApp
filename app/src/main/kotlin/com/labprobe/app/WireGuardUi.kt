@@ -331,7 +331,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
 
     suspend fun applyManagedEndpoint(profile: WireGuardProfile, previousEndpoint: String) {
         if (operations.state.value?.running == true) return
-        if (profile.endpoint == previousEndpoint || profile.endpoint.isBlank() || profile.endpointUpdateError.isNotBlank()) return
+        if (!shouldRetryWireGuardEndpoint(profile, previousEndpoint)) return
         try {
             wireGuardHubApi.patchManagedEndpoint(profile)
         } catch (cancelled: CancellationException) {
@@ -384,6 +384,50 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
         if (!startCheckInProgress && sharedOperation?.running != true) requestedStart = profile
     }
 
+    suspend fun refreshManagedProfileForStart(profile: WireGuardProfile): WireGuardProfile {
+        val serverState = wireGuardHubApi.loadServerState()
+        require(serverState.config.enabled) { "WireGuard 网关已停用，请先启用网关" }
+        require(serverState.config.serverPublicKey.isNotBlank()) { "Agent 服务端公钥尚未就绪，请稍后重试" }
+        serverConfig = serverState.config
+        var latest = withContext(Dispatchers.IO) { store.load() }.firstOrNull { it.id == profile.id } ?: profile
+        latest = latest.copy(serverPublicKey = serverState.config.serverPublicKey)
+        latest = applyWireGuardServerConfig(latest, serverState.config.listenPort, serverState.config.mtu, latest.endpointPort)
+        when (latest.endpointSource) {
+            WireGuardEndpointSource.STUN -> {
+                val snapshot = StunApi(prefs).list()
+                require(snapshot.rulesLoaded) { "STUN 规则尚未完整加载，请稍后重试" }
+                val routerIp = wireGuardHubApi.loadRouterLanIp().ifBlank { prefs.wgHomeLanIpv4 }
+                require(routerIp.isNotBlank() && routerIp != "127.0.0.1") { "无法确认当前路由器 LAN 地址" }
+                prefs.wgHomeLanIpv4 = routerIp
+                val current = withContext(Dispatchers.IO) { store.load() }
+                WireGuardEndpointCoordinator.applyStunSnapshot(
+                    store, current, snapshot.rules, serverState.config.listenPort, routerIp,
+                )
+            }
+            WireGuardEndpointSource.DDNS -> {
+                routerRepository.refreshLabProbeDdns(false)
+                routerRepository.refreshDdns(false)
+                val current = withContext(Dispatchers.IO) { store.load() }
+                WireGuardEndpointCoordinator.applyDdnsSnapshot(
+                    store,
+                    current,
+                    labProbeDdns.value?.records.orEmpty(),
+                    nativeDdns.value.orEmpty(),
+                )
+            }
+            WireGuardEndpointSource.MANUAL -> Unit
+        }
+        latest = withContext(Dispatchers.IO) { store.load() }.firstOrNull { it.id == profile.id } ?: latest
+        withContext(Dispatchers.IO) {
+            store.applyProvisioningResult(latest.id, serverState.config.serverPublicKey, latest.endpointBindingId)
+        }
+        latest = withContext(Dispatchers.IO) { store.load() }.first { it.id == latest.id }
+        if (latest.endpoint != profile.endpoint || latest.endpointUpdateError.isNotBlank()) {
+            wireGuardHubApi.patchManagedEndpoint(latest)
+        }
+        return latest
+    }
+
     LaunchedEffect(requestedStart) {
         val profile = requestedStart ?: return@LaunchedEffect
         requestedStart = null
@@ -396,20 +440,15 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                     report(if (started) "${profile.name} 已启动" else "等待系统 VPN 授权")
                     return@launch
                 }
-                if (profile.endpointSource == WireGuardEndpointSource.STUN) {
-                    // 只挡「结构不完整」：绑定身份为空说明这条配置根本没跟任何 STUN 规则挂上，
-                    // 中继侧（labrelay wireguard.rs）也会拒收。
-                    // 但 endpointUpdateError 不挡 —— 它只代表「这次刷新状态没成功」，地址本身是
-                    // 上次 STUN 成功时写进来的可用值；拿它拦连接等于让一次瞬时失败锁死入口，
-                    // 而且它会持久化到下次同步成功才清（WireGuardClient.kt:293）。
-                    require(profile.endpointBindingId.isNotBlank()) {
+                report("正在刷新网关与端点…")
+                val refreshed = refreshManagedProfileForStart(profile)
+                if (refreshed.endpointSource == WireGuardEndpointSource.STUN) {
+                    require(refreshed.endpointBindingId.isNotBlank()) {
                         "STUN 绑定尚未就绪，请先保存并同步配置"
                     }
                 }
-                // 网关状态不再预检：Hub/Agent 的能力快照会把「探测不到」报成「没就绪」，
-                // 用它拦连接就是把一个坏信号变成连不上的理由。直接连，握手结果自己会说话。
-                report("正在启动 ${profile.name}…")
-                val started = startClient(profile)
+                report("正在启动 ${refreshed.name}…")
+                val started = startClient(refreshed)
                 report(if (started) "${profile.name} 已启动" else "等待系统 VPN 授权")
             } finally {
                 startCheckInProgress = false
@@ -671,6 +710,7 @@ fun WireGuardScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         profile = profile,
                         active = isActive,
                         runtime = if (isActive) runtime else null,
+                        handshakeTimedOut = noHandshakeTooLong,
                         operation = visibleOperation?.takeIf { it.targetId.endsWith(":${profile.id}") },
                         onDismissOperation = ::dismissOperationStatus,
                         actionsEnabled = sharedOperation?.running != true,
@@ -1170,6 +1210,7 @@ private fun WireGuardProfileCard(
     profile: WireGuardProfile,
     active: Boolean,
     runtime: WireGuardRuntimeStatus? = null,
+    handshakeTimedOut: Boolean = false,
     operation: NetworkOperationState? = null,
     onDismissOperation: () -> Unit = {},
     actionsEnabled: Boolean = true,
@@ -1202,9 +1243,8 @@ private fun WireGuardProfileCard(
             Text("详情 ›", style = LabTypography.Caption.copy(color = WireGuardBlue))
         }
         if (active && runtime != null) {
-            // 发出去了却一个回包都没有 = 连不上，不是还在连；红叉比一直转圈诚实。
-            val connectFailed = !statsUnknown && (runtime.lastError.isNotBlank() ||
-                (runtime.latestHandshakeAt == 0L && runtime.sentBytes > 0L))
+            // 与顶部状态卡共用 30 秒握手宽限，避免刚启动就误报连接失败。
+            val connectFailed = !statsUnknown && (runtime.lastError.isNotBlank() || handshakeTimedOut)
             Surface(
                 color = when {
                     linkOk -> WireGuardGreen.copy(alpha = .08f)

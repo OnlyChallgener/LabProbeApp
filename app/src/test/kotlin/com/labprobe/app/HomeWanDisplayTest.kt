@@ -90,6 +90,27 @@ class HomeWanDisplayTest {
         assertTrue(rows.any { it.serviceType == "SSH" })
     }
 
+    @Test fun homeWebhookCardUsesOnlyReceivedAddressesAndNewerValuesWin() {
+        val data = JSONObject("""{
+          "vpnStunAddresses":[{"name":"SSH","address":"111.23.167.133:1001"}],
+          "vpnAddresses":[{"name":"SSH","address":"111.23.167.133:1002"},{"name":"HTTPS","address":"111.23.167.133:1003"}],
+          "vpn":{"OpenVPN":{"address":"111.23.167.133:1194"}},
+          "luckyStun":{"address":"111.23.167.133:1661"},
+          "stun":{"publicAddress":"111.23.167.133:20000"},
+          "wireguard":{"publicAddress":"111.23.167.133:51820"}
+        }""".trimIndent())
+
+        val rows = buildVpnRowsForHome(data, "2001:db8::1", emptyList(), webhookOnly = true)
+
+        assertEquals(listOf("SSH" to "111.23.167.133:1002", "HTTPS" to "111.23.167.133:1003"), rows)
+    }
+
+    @Test fun nonWebhookConsumersKeepExistingVpnSources() {
+        val data = JSONObject("""{"wireguard":{"publicAddress":"111.23.167.133:51820"},"luckyStun":{"address":"111.23.167.133:1661"}}""")
+        val rows = buildVpnRowsForHome(data, "", emptyList())
+        assertEquals(setOf("WireGuard", "Lucky"), rows.map { it.first }.toSet())
+    }
+
     @Test fun wanHealthOnlyReportsDualOnlineWithoutOfflineLineWarnings() {
         fun wan(id: String, online: Boolean, default: Boolean = false) = RouterWanUi(
             id, id.uppercase(), true, true, online, default, "DHCP", if (online) "192.0.2.1" else "",

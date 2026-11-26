@@ -10,7 +10,7 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-private class SecureStringStore(context: Context, prefsName: String, private val alias: String) {
+internal class SecureStringStore(context: Context, prefsName: String, private val alias: String) {
     private val prefs = context.applicationContext.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
 
     // 缓存的键就是"落盘的密文本身"：密文没变，解出来的必然还是同一个值，
@@ -78,6 +78,13 @@ private class SecureStringStore(context: Context, prefsName: String, private val
 /** Stores APP_TOKEN with a non-exportable Android Keystore key. */
 class SecureTokenStore(context: Context) {
     private val delegate = SecureStringStore(context, "labprobe_secure", "labprobe_hub_client_token_v1")
+    fun get(): String = delegate.get()
+    fun set(value: String) = delegate.set(value)
+}
+
+/** Stores the official cloud bearer token separately from every Hub credential. */
+class SecureOfficialAccountStore(context: Context) {
+    private val delegate = SecureStringStore(context, "labprobe_secure_official_account", "labprobe_official_cloud_token_v1")
     fun get(): String = delegate.get()
     fun set(value: String) = delegate.set(value)
 }

@@ -90,6 +90,16 @@ class EventNotificationPolicyTest {
     }
 
     @Test
+    fun certificateExpiryEventsDoNotDuplicateDedicatedCertificateNotifications() {
+        val certificate = event(5, "certificate_expiry", mac = "")
+        val network = event(6, "ddns_changed", mac = "")
+
+        val filtered = filterEventNotifications(listOf(certificate, network), emptySet())
+
+        assertEquals(listOf(6), filtered.map { it.id })
+    }
+
+    @Test
     fun singlePresenceEventRoutesToItsDeviceDetail() {
         assertEquals(
             EventNotificationTarget("device_detail", "aa:bb:cc:dd:ee:ff"),

@@ -192,14 +192,16 @@ class RealChildInternetRepository internal constructor(
     private val scope: CoroutineScope,
     private val operationTimeoutMs: Long = CHILD_GUARD_OPERATION_TIMEOUT_MS,
     private val commandPollMs: Long = COMMAND_POLL_MS,
-    private val cacheNamespace: String = routerId
+    private val cacheNamespace: String = routerId,
+    private val officialSync: OfficialMembershipSync? = null,
 ) : ChildInternetRepository {
     constructor(
         prefs: AppPrefs,
         routerId: String = "default",
         scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     ) : this(routerId, HubChildGuardTransport(prefs), SharedChildGuardCache(prefs), scope,
-        cacheNamespace = childGuardCacheNamespace(routerId, prefs.workspaceId, prefs.hub, prefs.token, prefs.hubDns))
+        cacheNamespace = childGuardCacheNamespace(routerId, prefs.workspaceId, prefs.hub, prefs.token, prefs.hubDns),
+        officialSync = OfficialMembershipSync(prefs))
 
     private val api get() = ChildGuardHubApi(transport, routerId)
     private var refreshJob: kotlinx.coroutines.Job? = null
@@ -562,7 +564,10 @@ class RealChildInternetRepository internal constructor(
     }
 
     override fun addGuardDevice(mac: String, name: String, onResult: (Result<Unit>) -> Unit) =
-        mutate(mac, onResult, request = { api.addDevice(listOf(mac), name) },
+        mutate(mac, onResult, request = {
+            val official = officialSync?.add(mac, name)
+            api.addDevice(listOf(mac), name, official)
+        },
             hudText = "加入中…", recoverAdd = true, accepted = { response ->
                 val confirmedUid = response.data().text("uid")
                 if (confirmedUid.isNotBlank() && state.devices.none { it.summary.matchesChildGuardDevice(mac) }) {
@@ -571,8 +576,11 @@ class RealChildInternetRepository internal constructor(
             })
 
     override fun removeGuardDevice(uid: String, onResult: (Result<Unit>) -> Unit) =
-        mutate(uid, onResult, request = { api.removeDevice(resolveRouterUid(uid),
-            state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) }?.summary?.macAddresses.orEmpty().toList()) },
+        mutate(uid, onResult, request = {
+            val macs = state.devices.firstOrNull { it.summary.matchesChildGuardDevice(uid) }?.summary?.macAddresses.orEmpty().toList()
+            val official = officialSync?.remove(macs, uid)
+            api.removeDevice(resolveRouterUid(uid), macs, official)
+        },
             hudText = "解除中…", accepted = {
             state = state.copy(devices = state.devices.filterNot { it.summary.matchesChildGuardDevice(uid) })
         })
@@ -1052,12 +1060,29 @@ internal class ChildGuardHubApi(private val hub: ChildGuardTransport, routerId: 
     }
     fun usage(uid: String) = get("$base/devices/${pathPart(uid)}/usage$routerQuery")
     fun candidates() = parseChildGuardCandidates(get("$base/devices/candidates$routerQuery"))
-    fun addDevice(macs: List<String>, name: String? = null) = write("$base/devices$routerQuery", "POST", JSONObject().apply {
-        put("macs", JSONArray(macs))
-        name?.takeIf { it.isNotBlank() }?.let { put("deviceName", it) }
-    })
-    fun removeDevice(uid: String, macs: List<String> = emptyList()) = write("$base/devices/${pathPart(uid)}$routerQuery", "DELETE",
-        JSONObject().put("macs", JSONArray(macs.filter { it.matches(Regex("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) })))
+    fun addDevice(macs: List<String>, name: String? = null, official: OfficialNativeConfirmation? = null) = write(
+        "$base/devices$routerQuery${if (official != null) "&sync=official" else ""}", "POST", JSONObject().apply {
+            put("macs", JSONArray(macs))
+            name?.takeIf { it.isNotBlank() }?.let { put("deviceName", it) }
+            official?.let {
+                put("cloudConfirmed", true)
+                put("operationId", it.operationId)
+                put("officialUid", it.officialUid)
+                put("bindingVersion", it.bindingVersion)
+            }
+        })
+    fun removeDevice(uid: String, macs: List<String> = emptyList(), official: OfficialNativeConfirmation? = null) = write(
+        "$base/devices/${pathPart(uid)}${routerQuery}${if (official != null) "&sync=official" else ""}", "DELETE",
+        JSONObject().apply {
+            put("macs", JSONArray(macs.filter { it.matches(Regex("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) }))
+            official?.let {
+                put("cloudConfirmed", true)
+                put("operationId", it.operationId)
+                put("officialUid", it.officialUid)
+                put("officialUids", JSONArray(listOf(it.officialUid, uid)))
+                put("bindingVersion", it.bindingVersion)
+            }
+        })
 
     /**
      * Official-style 上网统计. `macs` is passed straight through so the Hub can

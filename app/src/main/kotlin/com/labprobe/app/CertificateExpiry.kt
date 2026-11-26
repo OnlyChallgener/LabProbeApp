@@ -2,6 +2,8 @@ package com.labprobe.app
 
 import com.labprobe.app.ui.design.LabActionIcons
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.heightIn
 import android.Manifest
 import android.app.NotificationChannel
@@ -55,11 +57,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import android.util.Base64
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 data class CertificateExpiryItem(
     val id: String,
@@ -69,7 +82,8 @@ data class CertificateExpiryItem(
     val provider: String,
     val appliedOn: String,
     val expiresOn: String,
-    val url: String = ""
+    val url: String = "",
+    val owner: String = "",
 )
 
 private const val CERTIFICATE_CHANNEL_ID = "labprobe_certificate_expiry_v1"
@@ -90,7 +104,8 @@ fun AppPrefs.certificates(): List<CertificateExpiryItem> {
             provider = item.optString("provider").trim(),
             appliedOn = normalizeCertificateDate(item.optString("appliedOn")),
             expiresOn = expiresOn,
-            url = item.optString("url").trim()
+            url = item.optString("url").trim(),
+            owner = item.optString("owner").trim(),
         )
     }.sortedBy { parseCertificateDate(it.expiresOn) ?: LocalDate.MAX }
 }
@@ -108,6 +123,7 @@ fun AppPrefs.saveCertificates(items: List<CertificateExpiryItem>) {
                 .put("appliedOn", normalizeCertificateDate(item.appliedOn))
                 .put("expiresOn", normalizeCertificateDate(item.expiresOn))
                 .put("url", item.url.trim())
+                .put("owner", item.owner.trim())
         )
     }
     certificateExpiryJson = array.toString()
@@ -119,11 +135,21 @@ private fun AppPrefs.certificateReminderKeys(): Set<String> {
 }
 
 private fun AppPrefs.markCertificateReminderSent(key: String) {
-    certificateReminderKeysJson = JSONArray((certificateReminderKeys() + key).sorted()).toString()
+    certificateReminderKeysJson = JSONArray((certificateReminderKeys() + key).sorted().takeLast(200)).toString()
+}
+
+private fun AppPrefs.certificateEventKeys(): Set<String> {
+    val array = runCatching { JSONArray(certificateEventKeysJson) }.getOrElse { JSONArray() }
+    return (0 until array.length()).map { array.optString(it) }.filter { it.isNotBlank() }.toSet()
+}
+
+private fun AppPrefs.markCertificateEventSynced(key: String) = synchronized(this) {
+    certificateEventKeysJson = JSONArray((certificateEventKeys() + key).sorted().takeLast(200)).toString()
 }
 
 fun AppPrefs.clearCertificateReminderHistory(id: String) {
     certificateReminderKeysJson = JSONArray(certificateReminderKeys().filterNot { it.startsWith("$id:") }.sorted()).toString()
+    certificateEventKeysJson = JSONArray(certificateEventKeys().filterNot { it.startsWith("$id:") }.sorted()).toString()
 }
 
 private fun parseCertificateDate(raw: String): LocalDate? {
@@ -142,14 +168,22 @@ private fun certificateOpenUrl(raw: String): String {
     return if (value.contains("://")) value else "https://$value"
 }
 
-private fun reminderMilestone(remaining: Long): Int? = when (remaining) {
+internal fun certificateReminderMilestone(remaining: Long): Int? = when (remaining) {
     in 4L..7L -> 7
     in 1L..3L -> 3
     0L -> 0
     else -> null
 }
 
+internal fun certificateEventKey(item: CertificateExpiryItem, milestone: Int, hubIdentity: String = ""): String {
+    val base = "${item.id}:${item.expiresOn}:$milestone"
+    return if (hubIdentity.isBlank()) base else "$base:$hubIdentity"
+}
+
 object CertificateReminderCenter {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val inFlight = ConcurrentHashMap.newKeySet<String>()
+
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(
@@ -161,21 +195,58 @@ object CertificateReminderCenter {
     }
 
     fun notifyDue(context: Context, prefs: AppPrefs, onlyId: String? = null) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) return
-        ensureChannel(context)
+        val canNotify = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (canNotify) ensureChannel(context)
         val alreadySent = prefs.certificateReminderKeys()
+        val syncedEvents = prefs.certificateEventKeys()
+        val hubIdentity = workspaceDigest("${prefs.hub.trimEnd('/')}|${prefs.token.trim()}")
         prefs.certificates().asSequence()
             .filter { onlyId == null || it.id == onlyId }
             .forEach { item ->
                 val remaining = item.remainingDays() ?: return@forEach
-                val milestone = reminderMilestone(remaining) ?: return@forEach
+                val milestone = certificateReminderMilestone(remaining) ?: return@forEach
                 val reminderKey = "${item.id}:$milestone"
-                if (reminderKey in alreadySent) return@forEach
-                notify(context, item, remaining, milestone)
-                prefs.markCertificateReminderSent(reminderKey)
+                if (canNotify && reminderKey !in alreadySent) {
+                    notify(context, item, remaining, milestone)
+                    prefs.markCertificateReminderSent(reminderKey)
+                }
+                val eventKey = certificateEventKey(item, milestone, hubIdentity)
+                if (eventKey !in syncedEvents) syncEvent(prefs, item, remaining, milestone, eventKey)
             }
+    }
+
+    private fun syncEvent(
+        prefs: AppPrefs,
+        item: CertificateExpiryItem,
+        remaining: Long,
+        milestone: Int,
+        eventKey: String,
+    ) {
+        if (!inFlight.add(eventKey)) return
+        scope.launch {
+            try {
+                val title = if (remaining == 0L) "证书今天到期" else "证书将在 $remaining 天后到期"
+                val body = JSONObject()
+                    .put("type", "certificate_expiry")
+                    .put("eventKey", eventKey)
+                    .put("title", title)
+                    .put("name", item.note.ifBlank { "证书" })
+                    .put("newValue", "${item.domain} · 到期 ${item.expiresOn}")
+                    .put("domain", item.domain)
+                    .put("expiresOn", item.expiresOn)
+                    .put("daysRemaining", remaining)
+                    .put("milestone", milestone)
+                HubApi(prefs).requestJson("/api/events", "POST", body)
+                prefs.markCertificateEventSynced(eventKey)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Keep the key pending so the next app open or successful Hub sync retries it.
+            } finally {
+                inFlight.remove(eventKey)
+            }
+        }
     }
 
     private fun notify(context: Context, item: CertificateExpiryItem, remaining: Long, milestone: Int) {
@@ -206,6 +277,86 @@ object CertificateReminderCenter {
             .build()
         val id = 0x52000000 or ((item.id + milestone).hashCode() and 0x000FFFFF)
         NotificationManagerCompat.from(context).notify(id, notification)
+    }
+}
+
+internal data class CertificateFileSelection(
+    val certificate: Uri?,
+    val privateKey: Uri?,
+    val chain: Uri?,
+)
+
+internal suspend fun readCertificateFile(context: Context, uri: Uri): ByteArray = withContext(Dispatchers.IO) {
+    val output = java.io.ByteArrayOutputStream()
+    context.contentResolver.openInputStream(uri)?.use { input ->
+        val buffer = ByteArray(64 * 1024)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (output.size() + count > 2 * 1024 * 1024) throw IllegalStateException("证书文件超过 2 MB")
+            output.write(buffer, 0, count)
+        }
+    } ?: throw IllegalStateException("无法读取证书文件")
+    output.toByteArray()
+}
+
+internal suspend fun certificateImportBody(
+    context: Context,
+    selection: CertificateFileSelection,
+): JSONObject = withContext(Dispatchers.IO) {
+    val certificate = requireNotNull(selection.certificate) { "请选择证书文件" }
+    val privateKey = requireNotNull(selection.privateKey) { "请选择私钥文件" }
+    JSONObject()
+        .put("certificateBase64", Base64.encodeToString(readCertificateFile(context, certificate), Base64.NO_WRAP))
+        .put("keyBase64", Base64.encodeToString(readCertificateFile(context, privateKey), Base64.NO_WRAP))
+        .put("issuerCertificateBase64", selection.chain?.let {
+            Base64.encodeToString(readCertificateFile(context, it), Base64.NO_WRAP)
+        }.orEmpty())
+}
+
+internal fun updateHubHttpsCertificateRecord(
+    context: Context,
+    prefs: AppPrefs,
+    recordId: String,
+    certificate: CertificateExpiryItem?,
+) {
+    val items = prefs.certificates()
+    val index = items.indexOfFirst { it.id == recordId && it.owner == "hub_https" }
+    val next = when {
+        certificate == null -> items.filterNot { it.id == recordId && it.owner == "hub_https" }
+        index >= 0 -> items.toMutableList().also { it[index] = certificate }
+        else -> items + certificate
+    }
+    if (next == items) return
+    val previous = items.getOrNull(index)
+    if (previous?.expiresOn != certificate?.expiresOn) prefs.clearCertificateReminderHistory(recordId)
+    prefs.saveCertificates(next)
+    CertificateReminderCenter.notifyDue(context, prefs, onlyId = recordId)
+}
+
+@Composable
+internal fun CertificateFileSelector(
+    selection: CertificateFileSelection?,
+    onSelectionChange: (CertificateFileSelection?) -> Unit,
+    enabled: Boolean = true,
+) {
+    val certificatePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { certificate ->
+        if (certificate != null) onSelectionChange(CertificateFileSelection(certificate, selection?.privateKey, selection?.chain))
+    }
+    val keyPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { privateKey ->
+        if (privateKey != null) onSelectionChange(CertificateFileSelection(selection?.certificate, privateKey, selection?.chain))
+    }
+    val chainPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { chain ->
+        if (chain != null) onSelectionChange(CertificateFileSelection(selection?.certificate, selection?.privateKey, chain))
+    }
+    OutlinedButton({ certificatePicker.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth(), shape = LabPopupShapes.Field, enabled = enabled) {
+        Text(if (selection?.certificate == null) "选择证书文件（PEM / CRT）" else "证书文件已选择")
+    }
+    OutlinedButton({ keyPicker.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth(), shape = LabPopupShapes.Field, enabled = enabled) {
+        Text(if (selection?.privateKey == null) "选择私钥文件（PEM / KEY）" else "私钥文件已选择")
+    }
+    OutlinedButton({ chainPicker.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth(), shape = LabPopupShapes.Field, enabled = enabled) {
+        Text(if (selection?.chain == null) "选择证书链（可选）" else "证书链已选择")
     }
 }
 
@@ -308,7 +459,7 @@ private fun CertificateExpiryCard(item: CertificateExpiryItem, onEdit: () -> Uni
                         }
                     }
                 }
-                Box {
+                if (item.owner != "hub_https") Box {
                     IconButton(onClick = { menu = true }, modifier = Modifier.size(28.dp)) { Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(17.dp), tint = LabV2.InkMuted) }
                     LabDropdownMenu(expanded = menu, onDismissRequest = { menu = false }, shape = LabPopupShapes.Menu, containerColor = LabV2.Field, actionMenu = true) {
                         LabDropdownMenuItem(text = { Text("编辑", fontWeight = FontWeight.SemiBold) }, leadingIcon = { Icon(Icons.Rounded.Edit, null, Modifier.size(16.dp)) }, onClick = { menu = false; onEdit() })

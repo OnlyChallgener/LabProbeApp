@@ -65,7 +65,7 @@ class NativeDdnsWanTest {
             onlineCount = 1,
         )
         assertEquals("wan", inventory.preferred("nativeDdns")?.wanId)
-        assertEquals(listOf("wan"), nativeDdnsWanOptions(inventory, "broadband2"))
+        assertEquals(listOf("wan", "broadband2"), nativeDdnsWanOptions(inventory, "broadband2"))
     }
 
     @Test

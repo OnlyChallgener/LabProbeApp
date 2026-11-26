@@ -57,7 +57,8 @@ internal fun filterEventNotifications(
         .filter(::isValidMac)
         .toSet()
     return events.filter { event ->
-        !event.isDevicePresenceEvent() || cleanMac(event.mac).let { it in followed }
+        if (event.type == "certificate_expiry") false
+        else !event.isDevicePresenceEvent() || cleanMac(event.mac).let { it in followed }
     }
 }
 

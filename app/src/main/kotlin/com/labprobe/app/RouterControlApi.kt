@@ -452,6 +452,9 @@ data class NativePortMapRule(
     val wanId: String
         get() = src.trim().lowercase(Locale.ROOT).ifBlank { "all" }
 
+    fun normalizedForSourceMode(externalIp: Boolean): NativePortMapRule =
+        if (externalIp) copy(src = "") else copy(srcIp = "")
+
     fun toJson() = JSONObject()
         .put("ruleName", ruleName.trim())
         .put("wanId", wanId)
@@ -468,6 +471,19 @@ internal fun nativePortWanLabel(rule: NativePortMapRule): String = when (rule.wa
     "wan1" -> "WAN1"
     "wan" -> "WAN"
     else -> rule.wanId.uppercase(Locale.ROOT)
+}
+
+internal fun nativePortMapSourceLabel(rule: NativePortMapRule): String =
+    rule.srcIp.trim().ifBlank { nativePortWanLabel(rule) }
+
+internal fun isValidNativePortExternalIp(raw: String): Boolean {
+    val value = raw.trim()
+    if (value.isEmpty()) return false
+    if (value.contains(':')) return runCatching { java.net.InetAddress.getByName(value) }.isSuccess
+    val parts = value.split('.')
+    return parts.size == 4 && parts.all { part ->
+        part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && (part.toIntOrNull() ?: -1) in 0..255
+    }
 }
 
 internal fun parseNativePortRules(data: JSONObject): List<NativePortMapRule> {
@@ -504,7 +520,7 @@ data class UpnpState(
 internal fun upnpWanOptions(inventory: WanInventory?, current: String): List<String> {
     if (inventory == null) return (listOf("AUTO", "WAN") + current).filter { it.isNotBlank() }.distinct()
     val available = inventory.selectable("upnp").map { it.wanId.uppercase(Locale.ROOT) }
-    return ((if (available.isNotEmpty()) listOf("AUTO") else emptyList()) + available)
+    return ((if (available.isNotEmpty()) listOf("AUTO") else emptyList()) + available + current.uppercase(Locale.ROOT))
         .filter { it.isNotBlank() }
         .distinct()
 }
@@ -586,7 +602,8 @@ data class FirewallRule(
 data class FirewallState(
     val rules: List<FirewallRule> = emptyList(),
     val order: JSONObject = JSONObject(),
-    val maxRules: Int = 20
+    val maxRules: Int = 20,
+    val interfaces: List<String> = emptyList(),
 )
 
 internal fun parseFirewall(data: JSONObject): FirewallState {
@@ -614,7 +631,11 @@ internal fun parseFirewall(data: JSONObject): FirewallState {
             )
         }
     }
-    return FirewallState(rules, data.optJSONObject("order") ?: JSONObject(), data.optInt("maxLen", 20))
+    val interfaces = buildList {
+        val values = data.optJSONArray("interfaces") ?: org.json.JSONArray()
+        for (index in 0 until values.length()) add(values.optString(index).trim())
+    }.filter { it.isNotBlank() }.distinct()
+    return FirewallState(rules, data.optJSONObject("order") ?: JSONObject(), data.optInt("maxLen", 20), interfaces)
 }
 
 data class DdnsRecord(
@@ -742,8 +763,7 @@ internal fun ddnsEditorUsesModernForm(nativeProtocol: String, nativeDdns: Boolea
 
 internal fun nativeDdnsWanOptions(inventory: WanInventory?, current: String): List<String> {
     if (inventory == null) return (listOf("wan") + current).filter { it.isNotBlank() }.distinct()
-    return inventory.selectable("nativeDdns")
-        .map { it.wanId }
+    return (inventory.selectable("nativeDdns").map { it.wanId } + current)
         .filter { it.isNotBlank() }
         .distinct()
 }

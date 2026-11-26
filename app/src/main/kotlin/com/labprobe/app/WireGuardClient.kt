@@ -281,6 +281,10 @@ internal fun canApplyWireGuardEndpointUpdate(
 ): Boolean = source != WireGuardEndpointSource.MANUAL && profile.endpointSource == source &&
     (incomingEndpointRevision <= 0L || incomingEndpointRevision > profile.endpointRevision)
 
+internal fun shouldRetryWireGuardEndpoint(profile: WireGuardProfile, previousEndpoint: String): Boolean =
+    profile.endpoint.isNotBlank() &&
+        (profile.endpoint != previousEndpoint || profile.endpointUpdateError.isNotBlank())
+
 internal fun wireGuardProfileError(profile: WireGuardProfile, privateKey: String): String = when {
     profile.endpointHost.isBlank() -> "请填写 ${profile.endpointSource.displayName} 地址"
     profile.serverPublicKey.isBlank() -> "请填写 Agent 服务端公钥"
@@ -2203,7 +2207,6 @@ class WireGuardHubApi(private val prefs: AppPrefs) {
                 require(row.optString("endpointSource") == profile.endpointSource.wireValue) { "端点来源已改变，未覆盖" }
                 if (profile.endpointSource == WireGuardEndpointSource.STUN) {
                     require(row.optString("stunRuleId") == profile.endpointBindingId) { "STUN 绑定已改变，未覆盖" }
-                    require(profile.endpointUpdateError.isBlank()) { "STUN 地址未确认可用" }
                 }
                 if (row.optString("resolvedEndpoint") == profile.endpoint) return@withLock
                 val rowWan = row.optString("wanId").trim()

@@ -647,7 +647,7 @@ fun RouterNatDiagnosticScreen(prefs: AppPrefs, onBack: () -> Unit) {
                         modifier = Modifier.weight(1.35f),
                         leadingIcon = Icons.Rounded.Tune,
                     )
-                if (interfaceOptions.size > 1) {
+                if (interfaceOptions.isNotEmpty()) {
                     NativeSelector(
                         label = "WAN 类型",
                         value = interfaceName.uppercase(),

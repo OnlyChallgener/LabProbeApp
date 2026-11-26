@@ -130,6 +130,8 @@ data class SpeedProgress(
     val stat: String,
     val finished: Boolean,
     val primary: SpeedSampleSet?,
+    /** Firmware-reported combined result for native multi-WAN tests. */
+    val aggregate: SpeedSampleSet? = null,
     /** Every interface sample from the Hub, in the order reported by firmware. */
     val interfaces: List<SpeedSampleSet> = emptyList()
 )
@@ -209,11 +211,14 @@ internal fun speedTestProgressFrom(data: JSONObject): SpeedProgress {
         }
     }
     val primary = data.optJSONObject("primary")?.let { speedTestSampleFrom(it) }
-        ?: interfaces.firstOrNull()
+        ?: interfaces.firstOrNull { it.intf != "max" } ?: interfaces.firstOrNull()
+    val aggregate = data.optJSONObject("aggregate")?.let { speedTestSampleFrom(it) }
+        ?: interfaces.firstOrNull { it.intf == "max" }
     return SpeedProgress(
         stat = stat,
         finished = stat == "end",
         primary = primary,
+        aggregate = aggregate,
         interfaces = interfaces
     )
 }
@@ -279,8 +284,10 @@ internal fun speedTestHistoryFrom(data: JSONObject): List<SpeedHistoryRecord> {
 
 internal fun speedTestInterfaceName(value: String): String = value.trim().lowercase()
 
-internal fun speedTestInterfaceLabel(value: String): String =
-    value.trim().uppercase(java.util.Locale.US).ifBlank { "WAN" }
+internal fun speedTestInterfaceLabel(value: String): String = when (value.trim().lowercase()) {
+    "max" -> "叠加"
+    else -> value.trim().uppercase(java.util.Locale.US).ifBlank { "WAN" }
+}
 
 internal fun speedTestSamples(progress: SpeedProgress?): List<SpeedSampleSet> =
     progress?.interfaces?.ifEmpty { listOfNotNull(progress?.primary) }.orEmpty()
@@ -323,7 +330,7 @@ internal fun speedTestInterfaceOptions(
     return if (available.size > 1) {
         singles + SpeedTestInterfaceOption(
             id = SPEED_TEST_BOTH_INTERFACES,
-            label = available.joinToString(" + ") { speedTestInterfaceLabel(it) },
+            label = "叠加测速",
             interfaces = available
         )
     } else singles
@@ -514,6 +521,10 @@ internal fun visibleSpeedHistory(
 internal fun speedTestCollapsedSummary(progress: SpeedProgress?, running: Boolean): String {
     if (running) return "测速进行中…"
     val current = progress ?: return "路由器直连宽带测速 · 节点可选"
+    current.aggregate?.let { aggregate ->
+        val down = if (current.finished) speedSeriesAverage(aggregate.down) ?: aggregate.currentDown else aggregate.currentDown
+        return if (down == null) "路由器直连宽带测速 · 节点可选" else "叠加下行 ${formatSpeed(down)} Mbps"
+    }
     val samples = speedTestSamples(current)
     if (samples.size > 1) {
         // Multi-WAN results stay separate. Adding them would invent a score the
@@ -681,6 +692,8 @@ private fun RouterToolTile(
 private fun SpeedTestCard(prefs: AppPrefs) {
     val scope = rememberCoroutineScope()
     val api = remember(prefs.hub, prefs.token) { SpeedTestApi(prefs) }
+    val repository = remember(prefs.hub, prefs.token, prefs.hubDns) { RouterRepositoryRegistry.get(prefs) }
+    val wanResource by repository.wans.collectAsState()
 
     var expanded by remember { mutableStateOf(false) }
     var ports by remember { mutableStateOf<List<SpeedTestPort>>(emptyList()) }
@@ -694,6 +707,8 @@ private fun SpeedTestCard(prefs: AppPrefs) {
     var starting by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<SpeedProgress?>(null) }
     var error by remember { mutableStateOf("") }
+
+    LaunchedEffect(repository) { repository.refreshWans() }
 
     LaunchedEffect(prefs.hub, prefs.token) {
         preparing = true
@@ -723,9 +738,21 @@ private fun SpeedTestCard(prefs: AppPrefs) {
         // 为了看进度再去点标题。
         if (running) expanded = true
         if (!running) return@LaunchedEffect
+        val startedAt = System.currentTimeMillis()
+        var failures = 0
         while (true) {
             delay(1000)
-            val result = runCatching { api.progress() }.getOrNull() ?: continue
+            val result = runCatching { api.progress() }.getOrNull()
+            if (result == null) {
+                failures++
+                val reason = routerSpeedPollStopReason("running", failures, System.currentTimeMillis() - startedAt)
+                if (reason != null) {
+                    error = if (reason == "finished") "" else reason
+                    break
+                }
+                continue
+            }
+            failures = 0
             progress = result
             if (result.finished) {
                 runCatching { api.history() }.onSuccess { history = it }
@@ -735,9 +762,12 @@ private fun SpeedTestCard(prefs: AppPrefs) {
         running = false
     }
 
-    val interfaceOptions = speedTestInterfaceOptions(ports)
-    val selectedInterfaces = speedTestSelection(ports, selectedPort)
-    val samples = speedTestSamples(progress)
+    val interfaceOptions = speedTestInterfaceOptions(ports, wanResource.value)
+    val selectedInterfaces = speedTestSelection(ports, selectedPort, wanResource.value)
+    val samples = buildList {
+        progress?.aggregate?.let(::add)
+        speedTestSamples(progress).filterNot { it.intf == "max" }.forEach(::add)
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -782,7 +812,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
 
             if (expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (samples.size > 1) {
+                    if (samples.size > 1 || samples.firstOrNull()?.intf == "max") {
                         samples.forEach { sample ->
                             SpeedInterfaceResult(sample = sample, running = running, progress = progress)
                         }
@@ -882,7 +912,7 @@ private fun SpeedTestCard(prefs: AppPrefs) {
 private fun SpeedInterfaceResult(sample: SpeedSampleSet, running: Boolean, progress: SpeedProgress?) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "${speedTestInterfaceLabel(sample.intf)} · 独立测速结果",
+            if (sample.intf == "max") "叠加测速结果" else "${speedTestInterfaceLabel(sample.intf)} · 独立测速结果",
             style = LabTypography.SectionTitle.copy(color = SpeedInk)
         )
         SpeedGauge(
@@ -929,7 +959,7 @@ private fun SpeedInterfaceSelector(
             }
         }
         if (options.any { it.id == SPEED_TEST_BOTH_INTERFACES }) {
-            Text("双 WAN 分别测速，不合计速率", style = LabTypography.Caption.copy(color = SpeedMuted))
+            Text("叠加测速直接使用固件原生结果", style = LabTypography.Caption.copy(color = SpeedMuted))
         }
     }
 }

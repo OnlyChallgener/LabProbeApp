@@ -142,7 +142,7 @@
 
 ## November 25 — Router network details multi-WAN
 
-- Network details show WAN/WAN1 selector buttons only when more than one WAN is configured. WAN rows expand independently with at most one open line; configured offline WAN1 remains visible with its real state.
+- Network details show WAN/WAN1 selector buttons only when more than one WAN is online. WAN1 remains visible in settings and physical-port pages with its real configured state, while daily details hide an offline WAN1.
 - WAN fields are associated only by stable `wanId`. PPPoE shows real credentials/configuration, DHCP shows a lease only when supplied, static IP shows address/mask/gateway/DNS, and bridge shows only actual link/config data. No recursive first-match fallback may copy fields across lines.
 - LAN address, netmask and MAC remain a separate LAN section; AP information is unchanged. Per-WAN rates/traffic prefer firmware flow_audit and missing metrics remain absent rather than zero or aggregate substitutions.
 
@@ -150,3 +150,11 @@
 
 - Centered alert, editor and popup cards use opaque white `#FFFFFF` by default, superseding the earlier blue-cyan-white dialog gradient exception. Explicit caller-provided `color` or `containerColor` values take precedence.
 - Preserve existing dialog field backgrounds, corners, shadows, scrims, buttons and typography. This refinement does not change page gradients, ordinary cards, button gradients, bottom sheets or dropdown menus.
+
+## November 26 — Home Webhook endpoints and router hero density
+
+- Home VPN/STUN card displays only addresses received from the Webhook status payload. It does not merge the STUN management API, synthetic WireGuard address, Lucky fallback or event fallback. When both address arrays are present, the newer `vpnAddresses` value replaces the same service label from `vpnStunAddresses`.
+- Router hero rate labels use compact 10.5sp text and 20sp values. IPv4/IPv6 connection cards use the same pale surface and fine border as the temperature/uptime/device metric strip, with 10.5sp labels and 18sp values.
+- NAT diagnostic hides the WAN selector when only one WAN is online and shows it only when two lines are online, preserving the single-WAN flow.
+- Settings leading icon containers enforce a 38dp square with 10dp corners regardless of parent constraints.
+- STUN error copy is not used to hide backend faults. Native mapping fingerprints ignore Hub-only metadata and refresh only when the router forwarding fields still match the saved rule; real forwarding changes still require manual review.

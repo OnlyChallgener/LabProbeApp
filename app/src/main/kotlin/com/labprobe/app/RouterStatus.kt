@@ -986,9 +986,9 @@ internal fun RouterHeroCard(
             }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ConnectionCountChip("IPv4 连接数", if (ui.frameEpochMs > 0) ui.ipv4Connections else -1, LabV2.Primary, Modifier.weight(1f))
+            ConnectionCountChip("IPv4 连接数", if (ui.frameEpochMs > 0) ui.ipv4Connections else -1, Modifier.weight(1f))
             if (!isBe50) {
-                ConnectionCountChip("IPv6 连接数", if (ui.frameEpochMs > 0) ui.ipv6Connections else -1, Color(0xFF0EA5E9), Modifier.weight(1f))
+                ConnectionCountChip("IPv6 连接数", if (ui.frameEpochMs > 0) ui.ipv6Connections else -1, Modifier.weight(1f))
             }
         }
         if (ui.telemetryStale) {
@@ -1050,23 +1050,23 @@ private fun SpeedValue(
     trend: List<Long> = emptyList(),
 ) {
     val rate = bitRateParts(bps)
-    Row(modifier.heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(2.5.dp, 40.dp).background(color.copy(alpha = .75f), RoundedCornerShape(2.dp)))
-        Spacer(Modifier.width(8.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Row(modifier.heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(2.5.dp, 36.dp).background(color.copy(alpha = .75f), RoundedCornerShape(2.dp)))
+        Spacer(Modifier.width(7.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, Modifier.size(14.dp), tint = color)
-                Spacer(Modifier.width(4.dp))
-                Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
+                Icon(icon, null, Modifier.size(13.dp), tint = color)
+                Spacer(Modifier.width(3.dp))
+                Text(label, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
             }
             Row(verticalAlignment = Alignment.Bottom) {
-                Text(rate.first, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+                Text(rate.first, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
                 Spacer(Modifier.width(3.dp))
-                Text(rate.second, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = color.copy(alpha = .85f), maxLines = 1, modifier = Modifier.padding(bottom = 3.dp))
+                Text(rate.second, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = color.copy(alpha = .85f), maxLines = 1, modifier = Modifier.padding(bottom = 2.dp))
             }
         }
         if (trend.size >= 2) {
-            HeroSparkline(values = trend, color = color, modifier = Modifier.size(width = 76.dp, height = 36.dp))
+            HeroSparkline(values = trend, color = color, modifier = Modifier.size(width = 70.dp, height = 32.dp))
         }
     }
 }
@@ -1106,30 +1106,19 @@ private fun HeroSparkline(values: List<Long>, color: Color, modifier: Modifier =
 }
 
 @Composable
-private fun ConnectionCountChip(label: String, count: Long, color: Color, modifier: Modifier, unsupported: Boolean = false) {
+private fun ConnectionCountChip(label: String, count: Long, modifier: Modifier, unsupported: Boolean = false) {
     Box(
-        modifier.clip(RoundedCornerShape(16.dp)).background(
-            Brush.verticalGradient(listOf(Color(0xFFEAF3FF), Color(0xFFDCEBFF))),
-        ).border(1.dp, Color(0xFFD8E8FA), RoundedCornerShape(16.dp)),
+        modifier.clip(RoundedCornerShape(14.dp)).background(
+            Brush.horizontalGradient(listOf(Color(0xFFF8FBFF), Color(0xFFF2F7FF), Color(0xFFF8FBFF))),
+        ).border(1.dp, Color(0xFFE2EAF5), RoundedCornerShape(14.dp)),
     ) {
-        Canvas(Modifier.matchParentSize()) {
-            // 底部柔和蓝色渐变波浪，纯装饰。
-            val wave = Path().apply {
-                moveTo(0f, size.height * .72f)
-                quadraticTo(size.width * .25f, size.height * .52f, size.width * .5f, size.height * .70f)
-                quadraticTo(size.width * .75f, size.height * .86f, size.width, size.height * .62f)
-                lineTo(size.width, size.height)
-                lineTo(0f, size.height)
-                close()
-            }
-            drawPath(wave, Brush.verticalGradient(listOf(Color(0x00BBD9F8), Color(0x66BBD9F8)), startY = size.height * .52f, endY = size.height))
-        }
         Column(
-            Modifier.fillMaxWidth().padding(horizontal = 7.dp, vertical = 9.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 7.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            Text(label, fontSize = LabTypography.Caption.fontSize, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
-            Text(if (unsupported) "不支持" else if (count < 0) "--" else count.toString(), fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 1)
+            Text(label, fontSize = 10.5.sp, lineHeight = 13.sp, fontWeight = FontWeight.Medium, color = LabV2.InkMuted, maxLines = 1)
+            Text(if (unsupported) "不支持" else if (count < 0) "--" else count.toString(), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF10264F), maxLines = 1)
         }
     }
 }
@@ -1263,7 +1252,7 @@ internal fun RouterNetworkCard(ui: RouterDashboardUi, rawWans: Map<String, Route
     var expandedWanId by rememberSaveable { mutableStateOf<String?>(null) }
     var lanExpanded by rememberSaveable { mutableStateOf(false) }
     var apExpanded by rememberSaveable { mutableStateOf(false) }
-    val configuredWans = ui.wans.filter { it.configured }.sortedWith(
+    val configuredWans = ui.wans.filter { it.configured && it.online }.sortedWith(
         compareBy<RouterWanUi> { wanOrderRank(it.wanId) }.thenBy { it.wanId }
     )
     val context = LocalContext.current

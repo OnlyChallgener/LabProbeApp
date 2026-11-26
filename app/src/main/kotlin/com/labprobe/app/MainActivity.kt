@@ -226,12 +226,12 @@ object AppVersion {
     const val GITHUB = "https://github.com/OnlyChallgener/LabProbeApp"
     val CHANGELOG: List<Pair<String, List<String>>>
         get() = listOf(
-            "v$NAME build$CODE · 多 WAN 与官方账号测试版" to listOf(
-                "统一 WAN 发现、逐线路网络详情、固件测速、NAT、原生 DDNS、端口映射及 UPnP 展示",
-                "STUN 与 TCP 会话增加线路能力校验，LabProbe DDNS 支持逐 WAN 地址检测",
-                "设置页展开折叠、HTTPS 勾选、锐捷官方账号授权与退出流程",
-                "手机测速单方向封顶保持 10 秒（含 2 秒预热）",
-                "NAT 诊断、SSH、映射与首页多 WAN 展示收尾；双 WAN 实际运行仍需实机验证"
+            "v$NAME build$CODE · 多 WAN、HTTPS 与官方账号测试版" to listOf(
+                "统一 WAN 发现、逐线路网络详情、固件独立/叠加测速、NAT、原生 DDNS、端口映射及 UPnP 展示",
+                "端口映射区分出接口与外部服务器 IP，防火墙读取固件完整接口列表，NAT 显示当前 WAN 类型",
+                "新增 HTTPS 与证书独立页面，支持证书导入、更新、删除、到期提醒及事件同步",
+                "修复 STUN 原生映射元数据回写、WireGuard 端点重试与握手状态误报",
+                "官方账号继续支持内网 HTTP Hub；手机测速单方向封顶保持 10 秒，双 WAN 真机仍需验证"
             ),
             "v0.14.11 build355 · DDNS 与映射排版收尾" to listOf(
                 "原生 DDNS 在固件不返回当前 IP 时显示真实最后更新时间，刷新失败保留缓存并不再误报连接异常",
@@ -479,7 +479,8 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         private const val CAP_SNAPSHOT_KEY = "router.capabilities.snapshot"
     }
 
-    private val appContext: Context = context.applicationContext
+    internal val appContext: Context = context.applicationContext
+    internal val context: Context get() = appContext
     private val globalSp: SharedPreferences = appContext.getSharedPreferences("labprobe", Context.MODE_PRIVATE)
     private val secureTokenStore = SecureTokenStore(context)
     private val secureHookTokenStore = SecureHookTokenStore(context)
@@ -773,6 +774,8 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         set(v) = sp.edit().putString("certificate_expiry_v1", v).apply()
     var certificateReminderKeysJson: String get() = sp.getString("certificate_reminder_keys_v1", "[]") ?: "[]"
         set(v) = sp.edit().putString("certificate_reminder_keys_v1", v).apply()
+    var certificateEventKeysJson: String get() = sp.getString("certificate_event_keys_v1", "[]") ?: "[]"
+        set(v) = sp.edit().putString("certificate_event_keys_v1", v).apply()
     var webhookPortOverridesJson: String get() = sp.getString("webhook_port_overrides_v1", "{}") ?: "{}"
         set(v) = sp.edit().putString("webhook_port_overrides_v1", v).apply()
     var webhookRemarkOverridesJson: String get() = sp.getString("webhook_remark_overrides_v1", "{}") ?: "{}"
@@ -998,6 +1001,8 @@ class AppPrefs(context: Context, val workspaceId: String = DEFAULT_ROUTER_WORKSP
         sp.edit().putString("phone_speed_history_v1", "[]").apply()
     }
 
+    var httpsAdminToken: String get() = sp.getString("https_admin_token_v1", "") ?: ""
+        set(v) = sp.edit().putString("https_admin_token_v1", v.trim()).apply()
     var cacheStatus: String get() = sp.getString("cache_status", "") ?: ""
         set(v) = sp.edit().putString("cache_status", v).apply()
     var cacheRouterDashboard: String get() = sp.getString("cache_router_dashboard_v1", "") ?: ""
@@ -3441,7 +3446,7 @@ private fun LabProbeWorkspaceApp(
             }
             nestedToolReturnRoute = null
         }
-        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "network_health" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "child_internet_overview" || route == "child_internet_device" || route == "child_internet_picker" || route == "settings" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
+        BackHandler(route.startsWith("tool_") || route == "daily" || route == "health_score" || route == "network_health" || route == "router_status" || route == "router_settings" || route == "wol" || route == "devices" || route == "device_traffic" || route == "device_detail" || route == "child_internet_overview" || route == "child_internet_device" || route == "child_internet_picker" || route == "settings" || route == "https_certificates" || route == "ai_settings" || route == "ai_chat" || route == "ai_usage") {
             if (route.startsWith("tool_")) {
                 backFromTool()
             } else {
@@ -3461,6 +3466,7 @@ private fun LabProbeWorkspaceApp(
                     "child_internet_device" -> childInternetReturnRoute
                     "child_internet_picker" -> "child_internet_overview"
                     "settings" -> settingsReturnRoute
+                    "https_certificates" -> "settings"
                     "ai_settings" -> aiSettingsReturnRoute
                     "ai_chat" -> aiChatReturnRoute
                     "ai_usage" -> "ai_settings"
@@ -3665,10 +3671,15 @@ private fun LabProbeWorkspaceApp(
                             onBack = { route = settingsReturnRoute },
                             onOpenAi = { aiSettingsReturnRoute = "settings"; route = "ai_settings" },
                             onOpenOfficialAccount = { route = "official_account" },
+                            onOpenHttpsCertificates = { route = "https_certificates" },
                         )
                         "official_account" -> OfficialAccountScreen(
                             prefs = prefs,
                             workspaces = workspaces,
+                            onBack = { route = "settings" },
+                        )
+                        "https_certificates" -> HubHttpsCertificateScreen(
+                            prefs = prefs,
                             onBack = { route = "settings" },
                         )
                         "ai_settings" -> AiSettingsScreen(
@@ -5083,7 +5094,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         workspaceDigest(prefs.hubRoot + "|" + prefs.workspaceId + "|" + prefs.token)
     }
     val liveVpnRows = remember(state.status, nasV6, state.events, routerWorkspace.wireguardSupported) {
-        buildVpnRowsForHome(data, nasV6, state.events, routerWorkspace.wireguardSupported)
+        buildVpnRowsForHome(data, nasV6, state.events, routerWorkspace.wireguardSupported, webhookOnly = true)
     }
     var cachedVpnRows by remember(homeCacheIdentity) {
         mutableStateOf(if (prefs.cacheHomeRowsIdentity == homeCacheIdentity) decodeHomeVpnRows(prefs.cacheVpnRowsJson) else emptyList())
@@ -5098,35 +5109,7 @@ fun HomeScreen(prefs: AppPrefs, state: AppState, autoRefresh: String, onAuto: (S
         }
     }
     val vpnRows = if (data != null) liveVpnRows else cachedVpnRows
-
-    var stunRules by remember(prefs.hub, prefs.token, prefs.hubDns) { mutableStateOf<List<StunRule>?>(null) }
-    LaunchedEffect(prefs.hub, prefs.token, prefs.hubDns) {
-        stunRules = null
-        runCatching {
-            withContext(Dispatchers.IO) {
-                StunApi(prefs).list()
-            }
-        }.getOrNull()?.takeIf { it.rulesLoaded }?.let {
-            stunRules = it.rules
-        }
-    }
-    val liveStunRows = remember(data, stunRules) {
-        buildStunRowsForHome(data, stunRules)
-    }
-    var cachedStunRows by remember(homeCacheIdentity) {
-        mutableStateOf(if (prefs.cacheHomeRowsIdentity == homeCacheIdentity) decodeHomeStunRows(prefs.cacheStunRowsJson) else emptyList())
-    }
-    LaunchedEffect(liveStunRows, stunRules != null, data != null, homeCacheIdentity) {
-        if (stunRules != null || data != null) {
-            cachedStunRows = liveStunRows
-            withContext(Dispatchers.IO) {
-                prefs.cacheHomeRowsIdentity = homeCacheIdentity
-                prefs.cacheStunRowsJson = encodeHomeStunRows(liveStunRows)
-            }
-        }
-    }
-    val stunRows = if (stunRules != null || data != null) liveStunRows else cachedStunRows
-    val homeVpnStunRows = remember(stunRows, vpnRows) { buildHomeVpnStunRows(stunRows, vpnRows) }
+    val homeVpnStunRows = remember(vpnRows) { buildHomeVpnStunRows(emptyList(), vpnRows) }
     LaunchedEffect(state.status) {
         val resolved = resolveRouterExitIpv4(state.status)
         if (resolved.isNotBlank() && resolved != prefs.routerExitIpv4) {
@@ -5337,6 +5320,7 @@ fun buildVpnRowsForHome(
     nasV6: String,
     events: List<EventItem>,
     wireguardSupported: Boolean = true,
+    webhookOnly: Boolean = false,
 ): List<Pair<String, String>> {
     val rows = mutableListOf<Pair<String, String>>()
     fun addVpnRow(labelRaw: String?, addrRaw: String?) {
@@ -5351,19 +5335,24 @@ fun buildVpnRowsForHome(
         if (rows.none { it.second == addr }) rows += label to addr
     }
 
-    if (wireguardSupported) {
+    if (!webhookOnly && wireguardSupported) {
         val wg = cleanApiText(data?.optJSONObject("wireguard")?.optString("publicAddress"))
             .ifBlank { if (nasV6.isNotBlank()) "[$nasV6]:51820" else "" }
         addVpnRow("WireGuard", wg)
     }
 
-    val list = data?.optJSONArray("vpnStunAddresses") ?: data?.optJSONArray("vpnAddresses")
-    if (list != null) {
+    val addressLists = if (webhookOnly) {
+        listOfNotNull(data?.optJSONArray("vpnStunAddresses"), data?.optJSONArray("vpnAddresses"))
+    } else {
+        listOfNotNull(data?.optJSONArray("vpnStunAddresses") ?: data?.optJSONArray("vpnAddresses"))
+    }
+    addressLists.forEach { list ->
         for (i in 0 until list.length()) {
             val o = list.optJSONObject(i) ?: continue
             addVpnRow(o.optString("name", o.optString("service")), o.optString("address", o.optString("stun")))
         }
     }
+    if (webhookOnly) return rows
 
     val vpnObj = data?.optJSONObject("vpn")
     if (vpnObj != null) {
@@ -12701,6 +12690,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenAi: () -> Unit,
     onOpenOfficialAccount: () -> Unit,
+    onOpenHttpsCertificates: () -> Unit,
 ) = DetailShell(
     title = "APP设置", subtitle = "连接、AI、通知、隐私与关于", onBack = onBack,
     titleStyleOverride = LabTypography.PageTitle.copy(
@@ -12985,6 +12975,11 @@ fun SettingsScreen(
         onClick = onOpenOfficialAccount,
     )
     SettingsEntryCard(
+        title = "HTTPS 与证书",
+        leading = { SettingsCardLeading(Icons.Rounded.Lock, Color(0xFF0F766E)) },
+        onClick = onOpenHttpsCertificates,
+    )
+    SettingsEntryCard(
         title = "AI 与模型",
         leading = { SettingsCardLeading(Icons.Rounded.SmartToy, LabV2.Cyan) },
         onClick = onOpenAi,
@@ -13111,6 +13106,22 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
     }
 
     suspend fun getStatus(): JSONObject = withContext(Dispatchers.IO) { requestJsonShort("/api/status") }
+    suspend fun getHttpsStatus(): JSONObject = withContext(Dispatchers.IO) { requestJsonShort("/api/https/status") }
+    suspend fun saveHttpsConfig(body: JSONObject): JSONObject = withContext(Dispatchers.IO) { requestHttpsManaged("/api/https/config", "POST", body) }
+    suspend fun setHttpsEnabled(enabled: Boolean): JSONObject = withContext(Dispatchers.IO) {
+        requestHttpsManaged("/api/https/enable", "POST", JSONObject().put("enabled", enabled))
+    }
+    suspend fun importHttpsManual(body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
+        check(hubHttpsUsesEncryptedTransport(targetHub)) { "私钥只能通过 HTTPS 上传；首次配置请使用 NAS 本地证书文件" }
+        requestHttpsManaged("/api/https/import/manual", "POST", body)
+    }
+    suspend fun importHttpsLocal(certPath: String, keyPath: String, domain: String): JSONObject = withContext(Dispatchers.IO) {
+        requestHttpsManaged("/api/https/import/local", "POST", JSONObject()
+            .put("certPath", certPath).put("keyPath", keyPath).put("domain", domain))
+    }
+    suspend fun deleteHttpsCertificate(): JSONObject = withContext(Dispatchers.IO) {
+        requestHttpsManaged("/api/https/certificate", "DELETE", null)
+    }
     suspend fun getRouterDashboard(): JSONObject = withContext(Dispatchers.IO) {
         requireRouterStatus(requestJsonShort("/api/router/dashboard"))
     }
@@ -13227,13 +13238,27 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
             if (method.equals("GET", true)) childGuardReadClient else childGuardClient,
         ))
 
-    private fun jsonRequest(path: String, method: String, json: String?, requestClient: OkHttpClient): Request {
+    private fun requestHttpsManaged(path: String, method: String, body: JSONObject?): JSONObject =
+        JSONObject(requestText(path, method, body?.toString(), client, management = true, adminToken = prefs.httpsAdminToken))
+
+    private fun jsonRequest(
+        path: String,
+        method: String,
+        json: String?,
+        requestClient: OkHttpClient,
+        management: Boolean = false,
+        adminToken: String = "",
+    ): Request {
         if (prefs.pendingHubIdentity && !(path == "/api/router/config" && method.equals("GET", true)))
             throw java.io.IOException("设置已保存，等待确认目标路由器身份")
         if (targetHub.isBlank()) throw RuntimeException("Hub 地址为空，请先输入")
         val requestBuilder = Request.Builder()
             .url(joinUrl(validateHubTransportAddress(targetHub), path))
             .header("Accept", "application/json")
+        if (management) {
+            requestBuilder.header("X-LabProbe-Confirm", "https-management")
+            if (adminToken.isNotBlank()) requestBuilder.header("X-LabProbe-Admin-Token", adminToken)
+        }
         val body = json?.toRequestBody("application/json; charset=utf-8".toMediaType())
         return when (method.uppercase(Locale.ROOT)) {
             "GET" -> requestBuilder.get().build()
@@ -13252,6 +13277,14 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
         if (HubConnectionRequests.wasCancelled(call)) throw CancellationException("连接已切换，请求已停止")
         routerApiException(request.url.encodedPath, text)?.let { throw it }
         if (response.code == 401 || response.code == 403) {
+            val serverMsg = runCatching {
+                JSONObject(text).let { root ->
+                    root.optString("error").ifBlank { root.optString("message") }.ifBlank { root.optString("errorCode") }
+                }
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+            if (request.url.encodedPath.contains("/api/https") && serverMsg != null) {
+                throw HubHttpException(response.code, serverMsg)
+            }
             throw HubAuthenticationException(response.code, "APP_TOKEN 错误：请检查 Hub API Authorization")
         }
         if (!response.isSuccessful) {
@@ -13276,10 +13309,12 @@ class HubApi(private val prefs: AppPrefs, hubOverride: String? = null, tokenOver
         path: String,
         method: String = "GET",
         json: String? = null,
-        requestClient: OkHttpClient = client
+        requestClient: OkHttpClient = client,
+        management: Boolean = false,
+        adminToken: String = "",
     ): String {
         HubConnectionRequests.requireCurrent(connectionKey, connectionGeneration)
-        val request = jsonRequest(path, method, json, requestClient)
+        val request = jsonRequest(path, method, json, requestClient, management, adminToken)
         val call = requestClient.newCall(request)
         HubConnectionRequests.register(connectionKey, connectionGeneration, call)
         try {

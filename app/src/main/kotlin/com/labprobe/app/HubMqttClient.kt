@@ -257,15 +257,7 @@ class HubRealtimeWebSocketClient(
         }
     }
 
-    private fun realtimeUrl(rawHub: String): String {
-        val base = normalizeHubBaseUrl(rawHub)
-        if (base.isBlank()) return ""
-        return when {
-            base.startsWith("https://", true) -> "wss://${base.substring(8)}$REALTIME_PATH"
-            base.startsWith("http://", true) -> "ws://${base.substring(7)}$REALTIME_PATH"
-            else -> ""
-        }
-    }
+    private fun realtimeUrl(rawHub: String): String = hubRealtimeUrl(rawHub)
 
     private fun retryDelayMs(attempt: Int): Long = when (attempt) {
         1 -> 1_000L
@@ -287,6 +279,16 @@ class HubRealtimeWebSocketClient(
         const val WATCHDOG_INTERVAL_MS = 1_000L
         const val MAX_RETRY_ATTEMPT = 3
         const val REALTIME_PATH = "/api/realtime/ws"
+    }
+}
+
+internal fun hubRealtimeUrl(rawHub: String): String {
+    val base = normalizeHubBaseUrl(rawHub)
+    if (base.isBlank()) return ""
+    return when {
+        base.startsWith("https://", true) -> "wss://${base.substring(8)}/api/realtime/ws"
+        base.startsWith("http://", true) -> "ws://${base.substring(7)}/api/realtime/ws"
+        else -> ""
     }
 }
 

@@ -51,7 +51,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -101,33 +100,9 @@ internal fun luckyCertificateFileName(cert: JSONObject): String {
 
 internal data class LuckyCertificateImportSelection(
     val name: String,
-    val certificate: Uri,
-    val privateKey: Uri,
-    val chain: Uri?,
+    val files: CertificateFileSelection,
     val operationId: String,
 )
-
-internal suspend fun luckyCertificateImportBody(context: Context, selection: LuckyCertificateImportSelection): JSONObject = withContext(Dispatchers.IO) {
-    fun read(uri: Uri): ByteArray {
-        val output = java.io.ByteArrayOutputStream()
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            val buffer = ByteArray(64 * 1024)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                if (output.size() + count > 2 * 1024 * 1024) throw IllegalStateException("证书文件超过 2 MB")
-                output.write(buffer, 0, count)
-            }
-        } ?: throw IllegalStateException("无法读取证书文件")
-        return output.toByteArray()
-    }
-    JSONObject()
-        .put("name", selection.name)
-        .put("operationId", selection.operationId)
-        .put("certificateBase64", Base64.encodeToString(read(selection.certificate), Base64.NO_WRAP))
-        .put("keyBase64", Base64.encodeToString(read(selection.privateKey), Base64.NO_WRAP))
-        .put("issuerCertificateBase64", selection.chain?.let { Base64.encodeToString(read(it), Base64.NO_WRAP) } ?: "")
-}
 
 internal fun luckyNetworkLabel(network: String): String = when (network.trim().lowercase()) {
     "tcp6" -> "IPv6"
@@ -506,7 +481,9 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
         applyCertificate = false; refreshCertsNow(selected!!.getString("id"), replace = true)
     } }
     if (importCertificate) LuckyCertificateImportEditor(busy, error, { importCertificate = false }) { selection -> run {
-        val body = luckyCertificateImportBody(context, selection)
+        val body = certificateImportBody(context, selection.files)
+            .put("name", selection.name)
+            .put("operationId", selection.operationId)
         api.call("/${selected!!.getString("id")}/certificates", "POST", body)
         importCertificate = false; refreshCertsNow(selected!!.getString("id"), replace = true)
     } }
@@ -920,33 +897,19 @@ internal fun LuckyManagementScreen(prefs: AppPrefs, sourceOptions: List<Favorite
 
 @Composable private fun LuckyCertificateImportEditor(busy: Boolean, error: String, onDismiss: () -> Unit, onSave: (LuckyCertificateImportSelection) -> Unit) {
     var name by remember { mutableStateOf("") }
-    var certificate by remember { mutableStateOf<Uri?>(null) }
-    var privateKey by remember { mutableStateOf<Uri?>(null) }
-    var chain by remember { mutableStateOf<Uri?>(null) }
+    var files by remember { mutableStateOf<CertificateFileSelection?>(null) }
     val operation = remember { UUID.randomUUID().toString() }
-    val certificatePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { certificate = it }
-    val keyPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { privateKey = it }
-    val chainPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { chain = it }
     LabEditorDialog("导入证书", { if (!busy) onDismiss() }, actions = {
         OutlinedButton(onDismiss, Modifier.weight(1f), enabled = !busy) { Text("取消") }
         Button({
-            val cert = certificate
-            val key = privateKey
-            if (name.isNotBlank() && cert != null && key != null) {
-                onSave(LuckyCertificateImportSelection(name.trim(), cert, key, chain, operation))
+            val selected = files
+            if (name.isNotBlank() && selected?.certificate != null && selected.privateKey != null) {
+                onSave(LuckyCertificateImportSelection(name.trim(), selected, operation))
             }
-        }, Modifier.weight(1f), enabled = !busy && name.isNotBlank() && certificate != null && privateKey != null) { Text("导入") }
+        }, Modifier.weight(1f), enabled = !busy && name.isNotBlank() && files?.certificate != null && files?.privateKey != null) { Text("导入") }
     }) {
         LuckyField("证书名称", name, { name = it })
-        OutlinedButton({ certificatePicker.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth(), shape = LabPopupShapes.Field, enabled = !busy) {
-            Text(if (certificate == null) "选择证书文件（PEM / CRT）" else "证书文件已选择")
-        }
-        OutlinedButton({ keyPicker.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth(), shape = LabPopupShapes.Field, enabled = !busy) {
-            Text(if (privateKey == null) "选择私钥文件（PEM / KEY）" else "私钥文件已选择")
-        }
-        OutlinedButton({ chainPicker.launch(arrayOf("*/*")) }, Modifier.fillMaxWidth(), shape = LabPopupShapes.Field, enabled = !busy) {
-            Text(if (chain == null) "选择证书链（可选）" else "证书链已选择")
-        }
+        CertificateFileSelector(files, { files = it }, enabled = !busy)
         if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
     }
 }

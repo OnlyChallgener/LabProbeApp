@@ -110,6 +110,41 @@ class SettingsUiTest {
 
     @Test
     @Config(qualifiers = "w360dp-h800dp-xhdpi")
+    fun httpsCertificatePageShowsImportEntryWithoutCertificate() {
+        val prefs = AppPrefs(org.robolectric.RuntimeEnvironment.getApplication())
+        prefs.hub = "http://127.0.0.1:1"
+        compose.setContent {
+            MaterialTheme {
+                HubHttpsCertificateScreen(prefs) {}
+            }
+        }
+
+        compose.onNodeWithText("HTTPS 与证书").assertIsDisplayed()
+        compose.onNodeWithText("启用 HTTPS").assertIsDisplayed()
+        compose.onNodeWithText("SSL 证书").assertIsDisplayed()
+        compose.onNodeWithText("选择证书文件（PEM / CRT）").assertIsDisplayed()
+        compose.onNodeWithText("删除证书").assertDoesNotExist()
+    }
+
+    @Test
+    fun httpsCertificateSettingsEntryInvokesNavigation() {
+        var opened = false
+        compose.setContent {
+            MaterialTheme {
+                SettingsEntryCard(
+                    title = "HTTPS 与证书",
+                    leading = { Text("图标") },
+                    onClick = { opened = true },
+                )
+            }
+        }
+
+        compose.onNodeWithText("HTTPS 与证书").performClick()
+        compose.runOnIdle { assertTrue(opened) }
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-xhdpi")
     fun authorizedAccountFits360dpAndHasFullWidthLogout() {
         assertAuthorizedAccountLayout()
     }

@@ -192,6 +192,34 @@ class RouterSpeedTestLogicTest {
     }
 
     @Test
+    fun nativeAggregateIsDisplayedWithoutAddingPerWanRates() {
+        val aggregate = JSONObject()
+            .put("intf", "max")
+            .put("currentDown", 1100)
+            .put("currentUp", 110)
+        val progress = speedTestProgressFrom(
+            JSONObject()
+                .put("stat", "end")
+                .put("primary", JSONObject().put("intf", "wan").put("currentDown", 500))
+                .put("aggregate", aggregate)
+                .put("interfaces", JSONArray().put(aggregate))
+        )
+
+        assertEquals("max", progress.aggregate?.intf)
+        assertEquals("叠加", speedTestInterfaceLabel("max"))
+        assertEquals("叠加下行 1100.00 Mbps", speedTestCollapsedSummary(progress, running = false))
+    }
+
+    @Test
+    fun aggregateOptionUsesFirmwareNativeLabel() {
+        val ports = listOf(
+            SpeedTestPort("5", "WAN", "WAN", true, 2500, true),
+            SpeedTestPort("6", "WAN1", "LAN2/WAN1", true, 1000, true),
+        )
+        assertEquals("叠加测速", speedTestInterfaceOptions(ports).last().label)
+    }
+
+    @Test
     fun portSelectionUsesWanCapabilityNotArrayPosition() {
         val ports = speedTestPortsFrom(
             JSONObject().put(

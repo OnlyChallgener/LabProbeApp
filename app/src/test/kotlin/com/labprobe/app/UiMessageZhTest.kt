@@ -1,5 +1,6 @@
 package com.labprobe.app
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -38,6 +39,15 @@ class UiMessageZhTest {
         assertTrue(text.contains("切换路由器"))
         assertFalse(text.contains("multi_router_path_required"))
         assertFalse(text.contains("凭据"))
+    }
+
+    @Test
+    fun chinesePrefixDoesNotLeakEnglishRelayCause() {
+        assertEquals(
+            "STUN 端点同步失败：线路绑定不一致，请重新同步配置",
+            uiMessageZh("STUN 端点同步失败：endpoint updater wanId does not match profile"),
+        )
+        assertFalse(uiMessageZh("WireGuard 失败：connection refused").contains("connection refused"))
     }
 
     @Test

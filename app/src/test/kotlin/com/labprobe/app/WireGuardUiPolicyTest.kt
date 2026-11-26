@@ -91,6 +91,18 @@ class WireGuardUiPolicyTest {
     }
 
     @Test
+    fun unchangedEndpointRetriesOnlyAfterPreviousSyncFailure() {
+        val profile = WireGuardProfile.newProfile(WireGuardEndpointSource.STUN).copy(
+            endpointHost = "203.0.113.8",
+            endpointPort = 24567,
+        )
+        assertFalse(shouldRetryWireGuardEndpoint(profile, profile.endpoint))
+        assertTrue(shouldRetryWireGuardEndpoint(profile.copy(endpointUpdateError = "Hub 同步失败"), profile.endpoint))
+        assertTrue(shouldRetryWireGuardEndpoint(profile.copy(endpointHost = "203.0.113.9"), profile.endpoint))
+        assertFalse(shouldRetryWireGuardEndpoint(profile.copy(endpointHost = ""), profile.endpoint))
+    }
+
+    @Test
     fun gatewayRefreshComparesDesiredSettingsBeforeAgentState() {
         val desired = WireGuardServerConfig(listenPort = 51826, mtu = 1420, address = "10.77.0.1/24", enabled = false)
         assertTrue(wireGuardServerConfigMatchesDesired(desired.copy(revision = 9), desired))

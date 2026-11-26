@@ -42,7 +42,7 @@ class UpnpWanTest {
     }
 
     @Test
-    fun offlineCurrentBindingIsNotAddedBackAsAnOption() {
+    fun offlineCurrentBindingIsPreservedWithoutShowingSelector() {
         val inventory = WanInventory(
             wans = listOf(
                 WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("upnp" to true)),
@@ -51,7 +51,8 @@ class UpnpWanTest {
             configuredCount = 2,
             onlineCount = 1,
         )
-        assertEquals(listOf("AUTO", "WAN"), upnpWanOptions(inventory, "WAN1"))
+        assertEquals(listOf("AUTO", "WAN", "WAN1"), upnpWanOptions(inventory, "WAN1"))
+        assertFalse(upnpShowsWanSelector(inventory))
     }
 
     @Test

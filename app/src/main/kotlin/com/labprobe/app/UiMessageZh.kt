@@ -8,7 +8,18 @@ package com.labprobe.app
 fun uiMessageZh(raw: String?): String {
     val text = raw.orEmpty().trim()
     if (text.isBlank()) return ""
-    if (text.any { it in '\u4e00'..'\u9fff' }) return text
+    if (text.any { it in '\u4e00'..'\u9fff' }) {
+        val separator = text.indexOf('：').takeIf { it > 0 } ?: text.indexOf(':').takeIf { it > 0 }
+        if (separator != null) {
+            val prefix = text.substring(0, separator).trim()
+            val cause = text.substring(separator + 1).trim()
+            if (cause.isNotBlank() && cause.none { it in '\u4e00'..'\u9fff' } && cause.any { it.isLetter() }) {
+                val mapped = uiMessageZh(cause)
+                return if (mapped == "连接异常，请稍后重试") prefix else "$prefix：$mapped"
+            }
+        }
+        return text
+    }
 
     val lower = text.lowercase()
     val httpCode = Regex("""\b([45]\d\d)\b""").find(lower)?.groupValues?.getOrNull(1)
@@ -53,6 +64,12 @@ fun uiMessageZh(raw: String?): String {
         // 而不是让他去猜钥匙。能带上 /r/<id> 的只有「切换路由器」选出的服务端卡片。
         "multi_router_path_required" in lower ->
             "这台 Hub 把多台路由器合在同一个地址上，当前地址说不出要哪一台：请用「切换路由器」选到具体那一台"
+        "wanid does not match" in lower || "wan id does not match" in lower ->
+            "线路绑定不一致，请重新同步配置"
+        "endpoint revision conflict" in lower || "expected endpoint revision" in lower ->
+            "端点配置已在其他位置更新，请刷新后重试"
+        "endpoint profile not found" in lower ->
+            "端点配置不存在，请重新同步"
         "unauthorized" in lower || httpCode == "401" ->
             "认证失败，请检查凭据"
         "forbidden" in lower || httpCode == "403" ->

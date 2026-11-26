@@ -27,11 +27,25 @@ class NativePortMapWanTest {
     }
 
     @Test
-    fun specifiedSourceIpDoesNotReplaceWanDestinationBinding() {
+    fun externalIpAndInterfaceModesRemainDistinct() {
         val rule = NativePortMapRule(src = "wan1", srcIp = "203.0.113.10")
-        val json = rule.toJson()
-        assertEquals("wan1", json.getString("src"))
-        assertEquals("203.0.113.10", json.getString("srcIp"))
+        val externalIp = rule.normalizedForSourceMode(externalIp = true)
+        val interfaceRule = rule.normalizedForSourceMode(externalIp = false)
+
+        assertEquals("", externalIp.src)
+        assertEquals("203.0.113.10", externalIp.srcIp)
+        assertEquals("wan1", interfaceRule.src)
+        assertEquals("", interfaceRule.srcIp)
+        assertEquals("203.0.113.10", nativePortMapSourceLabel(externalIp))
+        assertEquals("WAN1", nativePortMapSourceLabel(interfaceRule))
+    }
+
+    @Test
+    fun externalIpValidationRejectsHostnamesAndInvalidOctets() {
+        assertTrue(isValidNativePortExternalIp("203.0.113.10"))
+        assertTrue(isValidNativePortExternalIp("2001:db8::1"))
+        assertFalse(isValidNativePortExternalIp("example.com"))
+        assertFalse(isValidNativePortExternalIp("999.1.1.1"))
     }
 
     @Test
@@ -47,7 +61,7 @@ class NativePortMapWanTest {
     }
 
     @Test
-    fun singleOnlineWanHidesSelectorAndOfflineBindingOption() {
+    fun singleOnlineWanHidesSelectorButKeepsOfflineBindingOption() {
         val inventory = WanInventory(
             wans = listOf(
                 WanInfo(wanId = "wan", supported = true, configured = true, enabled = true, online = true, capabilities = mapOf("portMapping" to true)),
@@ -56,7 +70,7 @@ class NativePortMapWanTest {
             configuredCount = 2,
             onlineCount = 1,
         )
-        assertEquals(listOf("all", "wan"), nativePortMapLineOptions(inventory))
+        assertEquals(listOf("all", "wan", "wan1"), nativePortMapLineOptions(inventory))
         assertFalse(nativePortMapShowsLineSelector(inventory))
     }
 
@@ -84,7 +98,7 @@ class NativePortMapWanTest {
             configuredCount = 2,
             onlineCount = 1,
         )
-        assertEquals(listOf("all", "wan1"), nativePortMapLineOptions(inventory))
+        assertEquals(listOf("all", "wan", "wan1"), nativePortMapLineOptions(inventory))
         assertFalse(nativePortMapShowsLineSelector(inventory))
     }
 }

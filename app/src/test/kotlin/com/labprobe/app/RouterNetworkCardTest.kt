@@ -56,7 +56,7 @@ class RouterNetworkCardTest {
                         name = "BE72", model = "BE72", online = true,
                         lanIpv4 = "192.168.5.1", netmask = "255.255.255.0", lanMac = "aa:bb:cc:dd:ee:ff",
                         apName = "LabProbe", apHostName = "BE72",
-                        wans = listOf(wan, wan1),
+                        wans = listOf(wan, wan1.copy(online = true, ipv4 = "198.51.100.2", gateway = "198.51.100.254")),
                     ))
                 }
             }
@@ -69,12 +69,30 @@ class RouterNetworkCardTest {
         compose.onNodeWithContentDescription("展开 WAN1 详情").performClick()
         compose.onNodeWithText("DHCP 租期").assertIsDisplayed()
         compose.onNodeWithText("宽带账号").assertDoesNotExist()
-        compose.onNodeWithText("离线").assertIsDisplayed()
 
         compose.onNodeWithContentDescription("展开 WAN 详情").performClick()
         compose.onNodeWithText("宽带账号").assertIsDisplayed()
         compose.onNodeWithText("DHCP 租期").assertDoesNotExist()
         compose.onNodeWithText("password-a").assertDoesNotExist()
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h800dp-xhdpi")
+    fun offlineWan1IsHiddenWhileWanStaysSingleLine() {
+        compose.setContent {
+            MaterialTheme {
+                Box(Modifier.fillMaxSize().padding(14.dp)) {
+                    RouterNetworkCard(RouterDashboardUi(
+                        name = "BE72", model = "BE72", online = true,
+                        wans = listOf(wan, wan1),
+                    ))
+                }
+            }
+        }
+        compose.onNodeWithText("WAN 信息").assertIsDisplayed()
+        compose.onNodeWithContentDescription("展开 WAN1 详情").assertDoesNotExist()
+        compose.onNodeWithText("WAN1").assertDoesNotExist()
+        compose.onNodeWithText("离线").assertDoesNotExist()
     }
 
     @Test
