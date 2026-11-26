@@ -2,9 +2,11 @@ package com.labprobe.app
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -297,6 +299,21 @@ internal fun SettingsConnectionStatusRow(status: SettingsConnectionStatus, modif
 }
 
 @Composable
+internal fun SettingsRoundedIconContainer(
+    background: Color,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(background),
+        contentAlignment = Alignment.Center,
+        content = content,
+    )
+}
+
+@Composable
 internal fun SettingsCardLeading(icon: androidx.compose.ui.graphics.vector.ImageVector, accent: Color) {
-    LabV2ToolIcon(icon, accent, size = 38)
+    SettingsRoundedIconContainer(accent.copy(alpha = .12f)) {
+        Icon(icon, null, tint = accent, modifier = Modifier.size(18.dp))
+    }
 }

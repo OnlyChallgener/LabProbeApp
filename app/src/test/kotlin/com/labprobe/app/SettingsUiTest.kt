@@ -1,5 +1,6 @@
 package com.labprobe.app
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -77,6 +79,33 @@ class SettingsUiTest {
         compose.onNodeWithText("管理地址").assertIsDisplayed()
         compose.onNodeWithContentDescription("折叠路由器配置").performClick()
         compose.onNodeWithText("管理地址").assertDoesNotExist()
+    }
+
+    @Test fun settingsIconContainerIsSquareRoundedBlock() {
+        compose.setContent {
+            MaterialTheme {
+                SettingsRoundedIconContainer(
+                    background = androidx.compose.ui.graphics.Color.Blue,
+                    modifier = Modifier.testTag("settings-icon"),
+                ) { Text("图标") }
+            }
+        }
+        val bounds = compose.onNodeWithTag("settings-icon").fetchSemanticsNode().boundsInRoot
+        val expected = with(compose.density) { 38.dp.toPx() }
+        assertEquals(expected, bounds.width, 1f)
+        assertEquals(expected, bounds.height, 1f)
+    }
+
+    @Test fun upnpRouterAssetHasTransparentCorners() {
+        val bitmap = BitmapFactory.decodeResource(
+            org.robolectric.RuntimeEnvironment.getApplication().resources,
+            R.drawable.upnp_router,
+        )
+        assertTrue(bitmap.hasAlpha())
+        assertEquals(0, bitmap.getPixel(0, 0) ushr 24)
+        assertEquals(0, bitmap.getPixel(bitmap.width - 1, 0) ushr 24)
+        assertEquals(0, bitmap.getPixel(0, bitmap.height - 1) ushr 24)
+        assertEquals(0, bitmap.getPixel(bitmap.width - 1, bitmap.height - 1) ushr 24)
     }
 
     @Test

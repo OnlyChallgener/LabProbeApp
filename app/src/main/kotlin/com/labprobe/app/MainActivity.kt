@@ -12869,10 +12869,7 @@ fun SettingsScreen(
         expanded = routerExpanded,
         onToggle = { routerExpanded = !routerExpanded },
         leading = {
-            Box(
-                Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFFEBF4FD)),
-                contentAlignment = Alignment.Center,
-            ) {
+            SettingsRoundedIconContainer(Color(0xFFEBF4FD)) {
                 RouterModelArtwork(routerWorkspace.model, routerWorkspace.name, routerWorkspace.routerId)
             }
         },

@@ -117,7 +117,7 @@
 - LabRelay proxy cards use a thin divider and one compact footer row with cumulative download/upload chips at left and history, quick-access and copy icons at right. Traffic values keep their units on one line and must not be labeled as realtime speed.
 - Router-direct cards place the endpoint/route block beside the same action icons, with no traffic chips, divider or empty footer. Card height follows content.
 - Action icons use uniform 32dp light rounded backgrounds. Preserve all existing callbacks, conditional quick-access behavior, real cumulative counters and long-address wrapping at 360dp and 393dp.
-- The UPnP service card uses the supplied blue/cyan router illustration. Its refresh action belongs at the right edge of the dynamic-mapping section header, not beside the service switch.
+- The UPnP service card uses the supplied blue/cyan router illustration with its background removed. Its refresh action belongs at the right edge of the dynamic-mapping section header, not beside the service switch.
 
 ## November 25 — NAT diagnostic density refinement
 
@@ -134,6 +134,7 @@
 ## November 25 — APP settings and global official account
 
 - Settings order is connection, router configuration, global Ruijie official account, AI, privacy and about. Connection defaults expanded; router configuration defaults collapsed. Collapsed cards contain only the existing icon, title and expand arrow.
+- Connection and router-configuration leading icons use explicit 38dp square containers with 10dp rounded corners; do not use shared circular or pill-shaped icon containers on these cards.
 - Hub and router management addresses use a full-width field with history action and an external HTTPS checkbox. Password fields start masked and provide an internal eye toggle. DNS and sync remain equal-width/height 48dp fields with the existing 14dp corners.
 - Save and Calibrate remain available below both expandable cards. Section titles use 14.5sp, one step below the previous 15.5sp; privacy and about retain their original layout, icons and content.
 - The official account is global across routers/Hubs. Its secondary page shows only real authorization, project/router counts, per-HUB sync state and reliable expiry; partial logout must remain visibly incomplete.
