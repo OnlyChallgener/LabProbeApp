@@ -314,7 +314,11 @@ internal class OfficialMembershipSync(
             ?: existing.routers.firstOrNull { it.matched }
             ?: return null
         if (!existingRow.matched) return null
-        val snapshot = runBlocking { accountRepository().status(verify = true) }
+        val snapshot = try {
+            runBlocking { accountRepository().status(verify = true) }
+        } catch (_: Exception) {
+            return null
+        }
         val row = snapshot.routers.firstOrNull { it.routerId == prefs.workspaceId }
             ?: snapshot.routers.firstOrNull { it.matched }
             ?: return null
@@ -330,7 +334,11 @@ internal class OfficialMembershipSync(
             ?: existing.routers.firstOrNull { it.matched }
             ?: return null
         if (!existingRow.matched) return null
-        val snapshot = runBlocking { accountRepository().status(verify = true) }
+        val snapshot = try {
+            runBlocking { accountRepository().status(verify = true) }
+        } catch (_: Exception) {
+            return null
+        }
         val row = snapshot.routers.firstOrNull { it.routerId == prefs.workspaceId }
             ?: snapshot.routers.firstOrNull { it.matched }
             ?: return null

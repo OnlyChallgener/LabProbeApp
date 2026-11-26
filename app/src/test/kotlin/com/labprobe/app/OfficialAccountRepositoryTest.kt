@@ -4,6 +4,7 @@ import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,6 +31,7 @@ class OfficialAccountRepositoryTest {
         var logins = 0
         var refreshes = 0
         var logouts = 0
+        var failDiscover = false
         override fun login(account: String, password: String): OfficialCloudSession {
             logins++
             return OfficialCloudSession(account, "cloud-secret", System.currentTimeMillis() + 600_000).also { session = it }
@@ -41,7 +43,10 @@ class OfficialAccountRepositoryTest {
         }
         override fun logout(session: OfficialCloudSession) { logouts++ }
         override fun projects(session: OfficialCloudSession): List<JSONObject> = emptyList()
-        override fun discoverBinding(session: OfficialCloudSession, serial: String): OfficialCloudBinding = binding.copy(serial = serial)
+        override fun discoverBinding(session: OfficialCloudSession, serial: String): OfficialCloudBinding {
+            if (failDiscover) throw OfficialCloudException("official_unavailable", "cloud unavailable")
+            return binding.copy(serial = serial)
+        }
         override fun members(session: OfficialCloudSession, binding: OfficialCloudBinding): List<OfficialCloudMember> = emptyList()
         override fun add(session: OfficialCloudSession, binding: OfficialCloudBinding, mac: String, name: String) =
             OfficialCloudMember("A".repeat(32), setOf(compactMac(mac)))
@@ -150,6 +155,21 @@ class OfficialAccountRepositoryTest {
         assertEquals("unsupported", snapshot.state)
         assertEquals("cloud-secret", store.get()?.token)
         assertFalse(snapshot.authorized)
+    }
+
+    @Test
+    fun cloudVerificationFailureFallsBackToNativeChildGuard() = runBlocking {
+        val prefs = AppPrefs(RuntimeEnvironment.getApplication())
+        val cloud = FakeCloud(binding).apply { failDiscover = true }
+        val store = MemoryStorage().apply {
+            set(OfficialCloudSession("owner@example.com", "cloud-secret", System.currentTimeMillis() + 600_000))
+        }
+        val repository = OfficialAccountRepository(prefs, request = { _, _, _ ->
+            JSONObject("""{"ok":true,"authorized":true,"state":"authorized","routers":[{"routerId":"default","serialNumber":"SN72","matched":true,"projectId":"p72","bindingVersion":1,"createTime":"2026-01-01 00:00:00","meshSerials":["SN72"]}]}""")
+        }, cloud = cloud, store = store)
+        val sync = OfficialMembershipSync(prefs, cloud, store) { repository }
+
+        assertNull(sync.add("aa:bb:cc:dd:ee:01", "iPad"))
     }
 
     @Test
