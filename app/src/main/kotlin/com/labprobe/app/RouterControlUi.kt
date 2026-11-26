@@ -516,7 +516,8 @@ private fun NativePortMappingPage(prefs: AppPrefs, nativePortMappingSupported: B
     val error = actionError.ifBlank { resource.error }
     val mappingSupported = nativePortMappingSupported &&
         (wanResource.value?.supportsLineCapability("portMapping") ?: true)
-    val canCreateMapping = mappingSupported && wanResource.value?.selectable("portMapping")?.isNotEmpty() == true
+    val canCreateMapping = mappingSupported &&
+        (wanResource.value?.wans.isNullOrEmpty() || wanResource.value?.selectable("portMapping")?.isNotEmpty() == true)
 
     suspend fun refreshDevices(force: Boolean = false): List<DeviceItem> {
         if (devices.isNotEmpty() && !force) return devices
